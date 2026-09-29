@@ -6,7 +6,7 @@ The workspace lives in `CardPlayy`. The original PDFs and reference repository a
 
 ## Run with Docker
 
-Requirements: Docker Engine with Compose v2 and Node.js 24 (for one-time local secret generation). From this directory:
+Requirements: Docker Engine with the `docker compose` command and Node.js 24 (for one-time local secret generation). From this directory:
 
 ```powershell
 node scripts/setup.mjs

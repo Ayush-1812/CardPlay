@@ -535,6 +535,37 @@ export function Dashboard() {
               >
                 Resend token
               </button>
+              <form
+                onSubmit={(event) =>
+                  submit(event, async (data) => {
+                    if (
+                      !window.confirm(
+                        "Delete your account and sign out? This cannot be undone.",
+                      )
+                    )
+                      return;
+                    await api("/me", "DELETE", {
+                      password: data.get("password"),
+                    });
+                    setUser(null);
+                    setNotice("Account deleted.");
+                  })
+                }
+              >
+                <label>
+                  Delete account
+                  <input
+                    name="password"
+                    type="password"
+                    required
+                    autoComplete="current-password"
+                    placeholder="Confirm with your password"
+                  />
+                </label>
+                <button className="text-button" disabled={busy}>
+                  Delete my account
+                </button>
+              </form>
             </section>
           ) : selected ? (
             <>
