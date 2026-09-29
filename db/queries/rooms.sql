@@ -13,7 +13,7 @@ UPDATE rooms SET status='closed' WHERE id=$1;
 -- name: RevokeRoomInvitations :exec
 UPDATE invitations SET revoked_at=now() WHERE room_id=$1 AND revoked_at IS NULL;
 -- name: RevokeTargetRoomInvitations :exec
-UPDATE invitations SET revoked_at=now() WHERE room_id=sqlc.arg(room_id)::uuid AND target_id=sqlc.arg(target_id)::uuid AND revoked_at IS NULL;
+UPDATE invitations SET revoked_at=now() WHERE room_id=sqlc.arg(room_id)::uuid AND (target_id=sqlc.arg(target_id)::uuid OR inviter_id=sqlc.arg(target_id)::uuid) AND revoked_at IS NULL;
 -- name: MyRooms :many
 SELECT r.* FROM rooms r JOIN room_members m ON m.room_id=r.id WHERE m.user_id=$1 AND r.status<>'closed' ORDER BY r.created_at DESC LIMIT 100;
 -- name: Members :many

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -117,6 +118,10 @@ func (m *Module) List(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.DBError(w, r, err)
 		return
+	}
+	// Without a cursor the query selects the newest page; return it oldest first.
+	if after == 0 {
+		slices.Reverse(items)
 	}
 	httpx.JSON(w, 200, map[string]any{"items": items})
 }

@@ -194,6 +194,21 @@ func TestAccountEmailAndSessionFlows(t *testing.T) {
 	if status, _, _ = request("/auth/verify", "", map[string]any{"token": second}); status != 200 {
 		t.Fatalf("verify=%d", status)
 	}
+	status, again, _ := request("/auth/register", "", map[string]any{"email": email, "handle": "other" + suffix, "display_name": "Again", "password": "another-password-1"})
+	if status != 201 || fmt.Sprint(again) != fmt.Sprint(result) {
+		t.Fatalf("existing email register=%d %v, want %v", status, again, result)
+	}
+	select {
+	case message := <-messages:
+		if !strings.Contains(message, "already has one") {
+			t.Fatal("existing-account notice missing")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("existing-account notice was not sent")
+	}
+	if status, _, _ = request("/auth/register", "", map[string]any{"email": "taken" + suffix + "@test.invalid", "handle": "flow" + suffix, "display_name": "Taken", "password": "another-password-1"}); status != 409 {
+		t.Fatalf("taken handle=%d", status)
+	}
 	if status, _, _ = request("/auth/password/forgot", "", map[string]any{"email": "missing" + suffix + "@test.invalid"}); status != 202 {
 		t.Fatalf("unknown recovery=%d", status)
 	}
@@ -249,5 +264,44 @@ func TestAccountEmailAndSessionFlows(t *testing.T) {
 	}
 	if status != 429 {
 		t.Fatalf("auth rate limit=%d", status)
+	}
+	// A stranger's failures must not lock the owner out of a known browser,
+	// and an invented device cookie must not escape the shared limit.
+	login := func(device, password string) (int, string) {
+		t.Helper()
+		data, _ := json.Marshal(map[string]string{"email": email, "password": password})
+		req, _ := http.NewRequest("POST", srv.URL+"/api/v1/auth/login", bytes.NewReader(data))
+		req.Header.Set("Origin", c.Origin)
+		req.Header.Set("Content-Type", "application/json")
+		if device != "" {
+			req.AddCookie(&http.Cookie{Name: accounts.DeviceCookieName, Value: device})
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		for _, item := range resp.Cookies() {
+			if item.Name == accounts.DeviceCookieName {
+				return resp.StatusCode, item.Value
+			}
+		}
+		return resp.StatusCode, ""
+	}
+	status, device := login("", "changed-password-789")
+	if status != 200 || len(device) != 64 {
+		t.Fatalf("device login=%d cookie=%q", status, device)
+	}
+	for i := 0; i < 11; i++ {
+		status, _ = login("", "wrong-password")
+	}
+	if status != 429 {
+		t.Fatalf("stranger lockout attempts=%d", status)
+	}
+	if status, _ = login(httpx.Token(), "changed-password-789"); status != 429 {
+		t.Fatalf("invented device cookie bypassed limit=%d", status)
+	}
+	if status, _ = login(device, "changed-password-789"); status != 200 {
+		t.Fatalf("known device locked out=%d", status)
 	}
 }

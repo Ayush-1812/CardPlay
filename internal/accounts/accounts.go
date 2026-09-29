@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/mail"
@@ -13,14 +14,30 @@ import (
 
 	"cardplay/internal/config"
 	"cardplay/internal/httpx"
+	"cardplay/internal/rooms"
 	"cardplay/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/argon2"
 )
 
 const CookieName = "cardplay_session"
+
+// DeviceCookieName marks a browser that has signed in to an account before.
+const DeviceCookieName = "cardplay_device"
+const DeviceTTL = 180 * 24 * time.Hour
+
+// KnownDevice reports whether token is an unexpired device of the account
+// with this email. Lookup errors count as unknown.
+func (m *Module) KnownDevice(ctx context.Context, token, email string) bool {
+	if len(token) != 64 {
+		return false
+	}
+	ok, err := store.New(m.DB).LoginDeviceKnown(ctx, store.LoginDeviceKnownParams{TokenHash: httpx.Hash(token), Email: email})
+	return err == nil && ok
+}
 
 type Module struct {
 	DB     *pgxpool.Pool
@@ -78,6 +95,8 @@ func (m *Module) Register(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, 503, "MAIL_UNAVAILABLE", "Email delivery is not configured; use seeded accounts in local development")
 		return
 	}
+	// Hash on every path so response timing does not reveal existing accounts.
+	passwordHash := PasswordHash(in.Password)
 	tx, err := m.DB.Begin(r.Context())
 	if err != nil {
 		httpx.DBError(w, r, err)
@@ -85,7 +104,25 @@ func (m *Module) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	q := store.New(tx)
-	user, err := q.CreateUser(r.Context(), store.CreateUserParams{Email: in.Email, Handle: in.Handle, DisplayName: in.DisplayName, PasswordHash: PasswordHash(in.Password)})
+	if _, err = q.UserByEmail(r.Context(), in.Email); err == nil {
+		m.registrationExists(w, r, in.Email)
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		httpx.DBError(w, r, err)
+		return
+	}
+	user, err := q.CreateUser(r.Context(), store.CreateUserParams{Email: in.Email, Handle: in.Handle, DisplayName: in.DisplayName, PasswordHash: passwordHash})
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) && pe.Code == "23505" {
+		// Handles are public, so a taken handle may be reported. A concurrent
+		// registration of the same email gets the generic response.
+		if pe.ConstraintName == "users_handle_key" {
+			httpx.Error(w, r, 409, "CONFLICT", "That handle is taken")
+		} else {
+			m.registrationExists(w, r, in.Email)
+		}
+		return
+	}
 	if err != nil {
 		httpx.DBError(w, r, err)
 		return
@@ -107,7 +144,18 @@ func (m *Module) Register(w http.ResponseWriter, r *http.Request) {
 		httpx.DBError(w, r, err)
 		return
 	}
-	httpx.JSON(w, 201, map[string]any{"id": user.ID, "verification_required": true})
+	httpx.JSON(w, 201, map[string]any{"verification_required": true})
+}
+
+// registrationExists answers exactly like a new registration and tells the
+// address owner, so registering never reveals whether an email has an account.
+func (m *Module) registrationExists(w http.ResponseWriter, r *http.Request, email string) {
+	body := fmt.Sprintf("To: %s\r\nFrom: %s\r\nSubject: Your CardPlay account\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nSomeone tried to create a CardPlay account with this email address, but it already has one.\r\nIf that was you, sign in at %s or use Forgot password there. Otherwise you can ignore this message.\r\n", email, m.Config.MailFrom, m.Config.Origin)
+	if err := m.sendMail(r.Context(), email, body); err != nil {
+		httpx.Error(w, r, 503, "MAIL_UNAVAILABLE", "Verification mail could not be delivered; try again")
+		return
+	}
+	httpx.JSON(w, 201, map[string]any{"verification_required": true})
 }
 func (m *Module) sendMail(ctx context.Context, to, body string) error {
 	return sendSMTP(ctx, m.Config.SMTPAddress, m.Config.MailFrom, to, body, m.Config.SMTPUsername, m.Config.SMTPPassword, m.Config.Environment == "production")
@@ -169,6 +217,12 @@ func (m *Module) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: CookieName, Value: token, Path: "/", HttpOnly: true, Secure: m.Config.SecureCookie, SameSite: http.SameSiteLaxMode, Expires: expires, MaxAge: int(m.Config.SessionTTL.Seconds())})
+	// Remember this browser so its future logins get their own rate-limit
+	// bucket; failures sent by strangers cannot lock it out. It grants no access.
+	device := httpx.Token()
+	if err = q.CreateLoginDevice(r.Context(), store.CreateLoginDeviceParams{TokenHash: httpx.Hash(device), UserID: u.ID, ExpiresAt: time.Now().Add(DeviceTTL)}); err == nil {
+		http.SetCookie(w, &http.Cookie{Name: DeviceCookieName, Value: device, Path: "/api/v1/auth/login", HttpOnly: true, Secure: m.Config.SecureCookie, SameSite: http.SameSiteStrictMode, MaxAge: int(DeviceTTL.Seconds())})
+	}
 	httpx.JSON(w, 200, map[string]any{"id": u.ID, "handle": u.Handle, "display_name": u.DisplayName, "email_verified": u.EmailVerified})
 }
 func (m *Module) Logout(w http.ResponseWriter, r *http.Request) {
@@ -274,6 +328,10 @@ func (m *Module) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if err = q.ChangePassword(r.Context(), store.ChangePasswordParams{ID: id, PasswordHash: PasswordHash(in.Password)}); err == nil {
 		err = q.RevokeAllSessions(r.Context(), id)
+	}
+	if err == nil {
+		// The reset token arrived by email, which proves the address.
+		err = q.VerifyUser(r.Context(), id)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -393,6 +451,11 @@ func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, 403, "INVALID_CREDENTIALS", "Incorrect password")
 		return
 	}
+	if err = transferHostedRooms(r.Context(), q, actor.ID); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	// Only hosted waiting rooms with nobody else seated remain to close.
 	closed, err := q.CloseHostedRooms(r.Context(), actor.ID)
 	if err != nil {
 		httpx.DBError(w, r, err)
@@ -441,4 +504,35 @@ func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: CookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: m.Config.SecureCookie, SameSite: http.SameSiteLaxMode})
 	w.WriteHeader(204)
+}
+
+// transferHostedRooms passes each waiting room the user hosts to its
+// longest-present other member, under the room lock like an explicit leave.
+func transferHostedRooms(ctx context.Context, q *store.Queries, userID string) error {
+	mine, err := q.MyRooms(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, room := range mine {
+		if room.HostID != userID || room.Status != "waiting" {
+			continue
+		}
+		locked, err := q.LockRoom(ctx, room.ID)
+		if err != nil {
+			return err
+		}
+		if locked.HostID != userID || locked.Status != "waiting" {
+			continue
+		}
+		members, err := q.Members(ctx, room.ID)
+		if err != nil {
+			return err
+		}
+		if next := rooms.NextHost(members, userID); next != nil {
+			if err = q.SetRoomHost(ctx, store.SetRoomHostParams{ID: room.ID, HostID: next.ID}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

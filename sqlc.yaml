@@ -6,6 +6,8 @@ sql:
       - db/migrations/000002_accounts.up.sql
       - db/migrations/000003_room_bans.up.sql
       - db/migrations/000004_room_presence.up.sql
+      - db/migrations/000005_outbox_notify.up.sql
+      - db/migrations/000006_login_devices.up.sql
     queries: db/queries
     gen:
       go:

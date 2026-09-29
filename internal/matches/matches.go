@@ -16,7 +16,17 @@ type Module struct {
 
 func (m *Module) Start(w http.ResponseWriter, r *http.Request) {
 	q := store.New(m.DB)
-	room, err := q.Room(r.Context(), chi.URLParam(r, "roomID"))
+	id := chi.URLParam(r, "roomID")
+	member, err := q.IsMember(r.Context(), store.IsMemberParams{RoomID: id, UserID: httpx.Actor(r).ID})
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if !member {
+		httpx.Error(w, r, 404, "NOT_FOUND", "Room not found")
+		return
+	}
+	room, err := q.Room(r.Context(), id)
 	if err != nil {
 		httpx.DBError(w, r, err)
 		return

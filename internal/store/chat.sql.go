@@ -15,7 +15,7 @@ SELECT c.id,c.user_id,u.handle,u.display_name,c.body,c.created_at,c.client_id
 FROM room_chat c JOIN users u ON u.id=c.user_id
 WHERE c.room_id=$1 AND c.id>$2::bigint AND c.created_at>now()-interval '7 days'
 AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE b.user_id=$3::uuid AND b.blocked_id=c.user_id)
-ORDER BY c.id LIMIT 100
+ORDER BY CASE WHEN $2::bigint=0 THEN -c.id ELSE c.id END LIMIT 100
 `
 
 type ChatPageParams struct {
@@ -71,15 +71,6 @@ func (q *Queries) ChatRecentCount(ctx context.Context, userID string) (int64, er
 	var count int64
 	err := row.Scan(&count)
 	return count, err
-}
-
-const deliverOutbox = `-- name: DeliverOutbox :exec
-UPDATE outbox SET delivered_at=now() WHERE id=$1
-`
-
-func (q *Queries) DeliverOutbox(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, deliverOutbox, id)
-	return err
 }
 
 const enqueue = `-- name: Enqueue :exec
@@ -151,37 +142,6 @@ func (q *Queries) InsertChat(ctx context.Context, arg InsertChatParams) (RoomCha
 	return i, err
 }
 
-const pendingOutbox = `-- name: PendingOutbox :many
-SELECT id, room_id, kind, payload, created_at, delivered_at FROM outbox WHERE delivered_at IS NULL ORDER BY id LIMIT 100
-`
-
-func (q *Queries) PendingOutbox(ctx context.Context) ([]Outbox, error) {
-	rows, err := q.db.Query(ctx, pendingOutbox)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Outbox{}
-	for rows.Next() {
-		var i Outbox
-		if err := rows.Scan(
-			&i.ID,
-			&i.RoomID,
-			&i.Kind,
-			&i.Payload,
-			&i.CreatedAt,
-			&i.DeliveredAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const purgeChat = `-- name: PurgeChat :exec
 DELETE FROM room_chat WHERE created_at<=now()-interval '7 days'
 `
@@ -192,7 +152,7 @@ func (q *Queries) PurgeChat(ctx context.Context) error {
 }
 
 const purgeOutbox = `-- name: PurgeOutbox :exec
-DELETE FROM outbox WHERE delivered_at<now()-interval '1 day'
+DELETE FROM outbox WHERE created_at<now()-interval '1 day'
 `
 
 func (q *Queries) PurgeOutbox(ctx context.Context) error {

@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -68,6 +70,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, down bool) error {
 				return fmt.Errorf("migration checksum changed: %s", name)
 			}
 			continue
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("migration %s: %w", name, err)
 		}
 		tx, err := conn.Begin(ctx)
 		if err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,8 +27,12 @@ func main() {
 }
 func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "health" {
+		port := "8080"
+		if _, p, err := net.SplitHostPort(os.Getenv("HTTP_ADDR")); err == nil && p != "" {
+			port = p
+		}
 		client := http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Get("http://127.0.0.1:8080/readyz")
+		resp, err := client.Get("http://" + net.JoinHostPort("127.0.0.1", port) + "/readyz")
 		if err != nil {
 			return errors.New("API not ready")
 		}

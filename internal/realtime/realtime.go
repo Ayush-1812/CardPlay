@@ -8,12 +8,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
+)
+
+// Application close codes tell the client why a socket ended. Other closes are
+// transient and the client reconnects with backoff.
+const (
+	closeSessionEnded    websocket.StatusCode = 4001
+	closeRoomUnavailable websocket.StatusCode = 4004
 )
 
 type Envelope struct {
@@ -95,16 +105,18 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			case <-tick.C:
-				if _, err := store.New(h.DB).SessionUser(ctx, c.session); err != nil {
-					_ = conn.Close(websocket.StatusPolicyViolation, "Session expired")
+				// A transient database error skips this heartbeat rather than
+				// ending a valid session or room subscription.
+				if _, err := store.New(h.DB).SessionUser(ctx, c.session); errors.Is(err, pgx.ErrNoRows) {
+					_ = conn.Close(closeSessionEnded, "Session expired")
 					return
 				}
 				h.mu.Lock()
 				room := c.room
 				h.mu.Unlock()
 				if room != "" {
-					if err := h.Rooms.Seen(ctx, room, c.actor); err != nil {
-						_ = conn.Close(websocket.StatusPolicyViolation, "Room unavailable")
+					if err := h.Rooms.Seen(ctx, room, c.actor); errors.Is(err, rooms.ErrForbidden) {
+						_ = conn.Close(closeRoomUnavailable, "Room unavailable")
 						return
 					}
 				}
@@ -141,9 +153,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sendError("INVALID_REQUEST", "Use v=1 and a UUID request id")
 			continue
 		}
-		if _, err := store.New(h.DB).SessionUser(ctx, c.session); err != nil {
-			_ = conn.Close(websocket.StatusPolicyViolation, "Session expired")
+		if _, err := store.New(h.DB).SessionUser(ctx, c.session); errors.Is(err, pgx.ErrNoRows) {
+			_ = conn.Close(closeSessionEnded, "Session expired")
 			return
+		} else if err != nil {
+			sendError("INTERNAL", "Try again")
+			continue
 		}
 		switch in.Type {
 		case "ping":
@@ -211,11 +226,25 @@ func (h *Hub) broadcast(room, kind string) {
 	}
 }
 
-// Run delivers persisted invalidations at least once. No private state or chat
-// body is broadcast; clients refetch through their authorized filtered views.
+// broadcastSubscribed hints every subscribed client to refetch, used when
+// notifications may have been missed while the listener was disconnected.
+func (h *Hub) broadcastSubscribed() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		if c.room != "" {
+			h.queue(c, outbound{Version: 1, Type: "room.updated", RoomID: c.room})
+			h.queue(c, outbound{Version: 1, Type: "chat.updated", RoomID: c.room})
+		}
+	}
+}
+
+// Run pushes committed outbox invalidations to this instance's sockets. The
+// outbox insert trigger issues a PostgreSQL NOTIFY on commit, so every API
+// replica receives every event. No private state or chat body is broadcast;
+// clients refetch through their authorized filtered views.
 func (h *Hub) Run(ctx context.Context) {
-	t := time.NewTicker(250 * time.Millisecond)
-	defer t.Stop()
+	go h.listen(ctx)
 	cleanup := time.NewTicker(time.Hour)
 	defer cleanup.Stop()
 	presence := time.NewTicker(5 * time.Second)
@@ -230,21 +259,62 @@ func (h *Hub) Run(ctx context.Context) {
 			}
 			h.mu.Unlock()
 			return
-		case <-t.C:
-			items, err := q.PendingOutbox(ctx)
-			if err != nil {
-				continue
-			}
-			for _, item := range items {
-				h.broadcast(item.RoomID, item.Kind)
-				_ = q.DeliverOutbox(ctx, item.ID)
-			}
 		case <-cleanup.C:
 			_ = q.PurgeChat(ctx)
 			_ = q.PurgeOutbox(ctx)
 			_ = q.DeleteExpiredSessions(ctx)
+			_ = q.DeleteExpiredLoginDevices(ctx)
 		case <-presence.C:
 			_ = h.Rooms.TransferAbsentHosts(ctx)
+		}
+	}
+}
+
+func (h *Hub) listen(ctx context.Context) {
+	delay := time.Second
+	for reconnect := false; ; reconnect = true {
+		listened, err := h.listenOnce(ctx, reconnect)
+		if ctx.Err() != nil {
+			return
+		}
+		if listened {
+			delay = time.Second
+		}
+		slog.Warn("outbox listener disconnected; retrying", "error_type", fmt.Sprintf("%T", err))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, 30*time.Second)
+	}
+}
+
+func (h *Hub) listenOnce(ctx context.Context, reconnect bool) (bool, error) {
+	pooled, err := h.DB.Acquire(ctx)
+	if err != nil {
+		return false, err
+	}
+	// A listening connection must never return to the pool.
+	conn := pooled.Hijack()
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err = conn.Exec(ctx, "LISTEN cardplay_outbox"); err != nil {
+		return false, err
+	}
+	if reconnect {
+		h.broadcastSubscribed()
+	}
+	for {
+		n, err := conn.WaitForNotification(ctx)
+		if err != nil {
+			return true, err
+		}
+		var event struct {
+			RoomID string `json:"room_id"`
+			Kind   string `json:"kind"`
+		}
+		if json.Unmarshal([]byte(n.Payload), &event) == nil && event.RoomID != "" {
+			h.broadcast(event.RoomID, event.Kind)
 		}
 	}
 }

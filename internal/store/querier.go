@@ -29,17 +29,18 @@ type Querier interface {
 	ConsumeAccountToken(ctx context.Context, arg ConsumeAccountTokenParams) (string, error)
 	CreateAccountToken(ctx context.Context, arg CreateAccountTokenParams) error
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error)
+	CreateLoginDevice(ctx context.Context, arg CreateLoginDeviceParams) error
 	CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeclineFriend(ctx context.Context, arg DeclineFriendParams) (int64, error)
 	DeleteAccountTokens(ctx context.Context, userID string) error
 	DeleteBlocks(ctx context.Context, userID string) error
+	DeleteExpiredLoginDevices(ctx context.Context) error
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteFriendships(ctx context.Context, requesterID string) error
 	DeletePurposeTokens(ctx context.Context, arg DeletePurposeTokensParams) error
 	DeleteSession(ctx context.Context, tokenHash string) error
-	DeliverOutbox(ctx context.Context, id int64) error
 	Enqueue(ctx context.Context, arg EnqueueParams) error
 	ExistingChat(ctx context.Context, arg ExistingChatParams) (RoomChat, error)
 	HasBlock(ctx context.Context, arg HasBlockParams) (bool, error)
@@ -56,13 +57,13 @@ type Querier interface {
 	ListSessions(ctx context.Context, userID string) ([]ListSessionsRow, error)
 	LockRoom(ctx context.Context, id string) (Room, error)
 	LockSocialPair(ctx context.Context, pair string) error
+	LoginDeviceKnown(ctx context.Context, arg LoginDeviceKnownParams) (bool, error)
 	MarkRoomSeen(ctx context.Context, arg MarkRoomSeenParams) (int64, error)
 	Match(ctx context.Context, id string) (Match, error)
 	Members(ctx context.Context, roomID string) ([]MembersRow, error)
 	MyInvitations(ctx context.Context, userID string) ([]MyInvitationsRow, error)
 	MyRooms(ctx context.Context, userID string) ([]Room, error)
 	OldestActiveRoomMember(ctx context.Context, arg OldestActiveRoomMemberParams) (string, error)
-	PendingOutbox(ctx context.Context) ([]Outbox, error)
 	PurgeChat(ctx context.Context) error
 	PurgeOutbox(ctx context.Context) error
 	RemoveFriend(ctx context.Context, arg RemoveFriendParams) error

@@ -45,3 +45,10 @@ UPDATE users SET email='deleted+'||id::text||'@cardplay.invalid',handle='deleted
 DELETE FROM room_members WHERE user_id=$1 AND room_id IN (SELECT id FROM rooms WHERE status='waiting') RETURNING room_id;
 -- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at<=now();
+-- name: CreateLoginDevice :exec
+INSERT INTO login_devices(token_hash,user_id,expires_at) VALUES($1,$2,$3);
+-- name: LoginDeviceKnown :one
+SELECT EXISTS(SELECT 1 FROM login_devices d JOIN users u ON u.id=d.user_id
+WHERE d.token_hash=sqlc.arg(token_hash) AND d.expires_at>now() AND u.email=sqlc.arg(email) AND u.deleted_at IS NULL);
+-- name: DeleteExpiredLoginDevices :exec
+DELETE FROM login_devices WHERE expires_at<=now();

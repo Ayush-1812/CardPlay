@@ -113,6 +113,21 @@ func (q *Queries) CreateAccountToken(ctx context.Context, arg CreateAccountToken
 	return err
 }
 
+const createLoginDevice = `-- name: CreateLoginDevice :exec
+INSERT INTO login_devices(token_hash,user_id,expires_at) VALUES($1,$2,$3)
+`
+
+type CreateLoginDeviceParams struct {
+	TokenHash string    `json:"token_hash"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (q *Queries) CreateLoginDevice(ctx context.Context, arg CreateLoginDeviceParams) error {
+	_, err := q.db.Exec(ctx, createLoginDevice, arg.TokenHash, arg.UserID, arg.ExpiresAt)
+	return err
+}
+
 const createSession = `-- name: CreateSession :exec
 INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,$3)
 `
@@ -177,6 +192,15 @@ DELETE FROM user_blocks WHERE user_id=$1 OR blocked_id=$1
 
 func (q *Queries) DeleteBlocks(ctx context.Context, userID string) error {
 	_, err := q.db.Exec(ctx, deleteBlocks, userID)
+	return err
+}
+
+const deleteExpiredLoginDevices = `-- name: DeleteExpiredLoginDevices :exec
+DELETE FROM login_devices WHERE expires_at<=now()
+`
+
+func (q *Queries) DeleteExpiredLoginDevices(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteExpiredLoginDevices)
 	return err
 }
 
@@ -249,6 +273,23 @@ func (q *Queries) ListSessions(ctx context.Context, userID string) ([]ListSessio
 		return nil, err
 	}
 	return items, nil
+}
+
+const loginDeviceKnown = `-- name: LoginDeviceKnown :one
+SELECT EXISTS(SELECT 1 FROM login_devices d JOIN users u ON u.id=d.user_id
+WHERE d.token_hash=$1 AND d.expires_at>now() AND u.email=$2 AND u.deleted_at IS NULL)
+`
+
+type LoginDeviceKnownParams struct {
+	TokenHash string `json:"token_hash"`
+	Email     string `json:"email"`
+}
+
+func (q *Queries) LoginDeviceKnown(ctx context.Context, arg LoginDeviceKnownParams) (bool, error) {
+	row := q.db.QueryRow(ctx, loginDeviceKnown, arg.TokenHash, arg.Email)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const removeFromWaitingRooms = `-- name: RemoveFromWaitingRooms :many

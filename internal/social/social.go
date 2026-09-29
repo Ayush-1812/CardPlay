@@ -76,8 +76,22 @@ func (m *Module) Change(w http.ResponseWriter, r *http.Request) {
 	}
 	switch action {
 	case "request":
-		// Crossed requests keep a single pending pair: only the recipient accepts.
-		_, err = q.RequestFriend(r.Context(), store.RequestFriendParams{RequesterID: actor, RecipientID: other})
+		// Requesting someone who already asked you accepts their request.
+		var n int64
+		n, err = q.AcceptFriend(r.Context(), store.AcceptFriendParams{RequesterID: other, RecipientID: actor})
+		if err == nil && n > 0 {
+			if err = tx.Commit(r.Context()); err != nil {
+				httpx.DBError(w, r, err)
+				return
+			}
+			httpx.JSON(w, 200, map[string]string{"status": "accepted"})
+			return
+		}
+		// Unknown, unverified and already-related users all return 204 so the
+		// response never reveals private accounts.
+		if err == nil {
+			_, err = q.RequestFriend(r.Context(), store.RequestFriendParams{RequesterID: actor, RecipientID: other})
+		}
 	case "accept":
 		var n int64
 		n, err = q.AcceptFriend(r.Context(), store.AcceptFriendParams{RequesterID: other, RecipientID: actor})

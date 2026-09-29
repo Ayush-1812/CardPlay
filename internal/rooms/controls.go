@@ -144,6 +144,7 @@ func (m *Module) Kick(w http.ResponseWriter, r *http.Request) {
 		_, err = q.RemoveMember(r.Context(), store.RemoveMemberParams{RoomID: id, UserID: target})
 	}
 	if err == nil {
+		// Revokes invitations to the removed member and links they created.
 		err = q.RevokeTargetRoomInvitations(r.Context(), store.RevokeTargetRoomInvitationsParams{RoomID: id, TargetID: target})
 	}
 	if err == nil {
@@ -206,6 +207,18 @@ func (m *Module) TransferHost(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+// NextHost returns the longest-present member other than the departing host,
+// or nil when nobody else is seated.
+func NextHost(members []store.MembersRow, departing string) *store.MembersRow {
+	var next *store.MembersRow
+	for i := range members {
+		if members[i].ID != departing && (next == nil || members[i].JoinedAt.Before(next.JoinedAt)) {
+			next = &members[i]
+		}
+	}
+	return next
+}
+
 func (m *Module) Leave(w http.ResponseWriter, r *http.Request) {
 	id, actor := chi.URLParam(r, "roomID"), httpx.Actor(r).ID
 	tx, err := m.DB.Begin(r.Context())
@@ -239,13 +252,7 @@ func (m *Module) Leave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if room.HostID == actor {
-		var next *store.MembersRow
-		for i := range members {
-			if members[i].ID != actor && (next == nil || members[i].JoinedAt.Before(next.JoinedAt)) {
-				next = &members[i]
-			}
-		}
-		if next != nil {
+		if next := NextHost(members, actor); next != nil {
 			err = q.SetRoomHost(r.Context(), store.SetRoomHostParams{ID: id, HostID: next.ID})
 		} else {
 			err = q.CloseRoom(r.Context(), id)
@@ -256,6 +263,10 @@ func (m *Module) Leave(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if _, err = q.RemoveMember(r.Context(), store.RemoveMemberParams{RoomID: id, UserID: actor}); err == nil {
+		// Links the departing member created must not keep admitting people.
+		err = q.RevokeTargetRoomInvitations(r.Context(), store.RevokeTargetRoomInvitationsParams{RoomID: id, TargetID: actor})
+	}
+	if err == nil {
 		err = q.ResetReady(r.Context(), id)
 	}
 	if err == nil {

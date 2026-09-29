@@ -475,7 +475,7 @@ func (q *Queries) RevokeRoomInvitations(ctx context.Context, roomID string) erro
 }
 
 const revokeTargetRoomInvitations = `-- name: RevokeTargetRoomInvitations :exec
-UPDATE invitations SET revoked_at=now() WHERE room_id=$1::uuid AND target_id=$2::uuid AND revoked_at IS NULL
+UPDATE invitations SET revoked_at=now() WHERE room_id=$1::uuid AND (target_id=$2::uuid OR inviter_id=$2::uuid) AND revoked_at IS NULL
 `
 
 type RevokeTargetRoomInvitationsParams struct {

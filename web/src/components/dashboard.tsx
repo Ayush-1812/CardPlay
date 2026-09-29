@@ -15,6 +15,17 @@ import {
   User,
 } from "../lib/api";
 
+const SESSION_ENDED = "Your session ended. Sign in again.";
+// Server WebSocket close codes; any other close is transient and retried.
+const CLOSE_SESSION_ENDED = 4001;
+const CLOSE_ROOM_UNAVAILABLE = 4004;
+
+function sessionEnded(e: unknown) {
+  return (
+    e instanceof APIError && e.status === 401 && e.code === "UNAUTHENTICATED"
+  );
+}
+
 export function Dashboard() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,6 +52,63 @@ export function Dashboard() {
   >([]);
   const [inviteToken, setInviteToken] = useState("");
   const chatDraft = useRef<{ body: string; id: string } | null>(null);
+  const busyRef = useRef(false);
+  const selectedRef = useRef<string | null>(null);
+  const lastChatID = useRef(0);
+  const chatQueue = useRef<Promise<void>>(Promise.resolve());
+  const chatLog = useRef<HTMLDivElement>(null);
+  const userID = user?.id;
+  const verified = !!user?.email_verified;
+
+  // Clears everything tied to the signed-in account.
+  const endSession = useCallback((message: string) => {
+    setUser(null);
+    setRooms([]);
+    setFriends([]);
+    setBlocks([]);
+    setInvitations([]);
+    setSearchResult(null);
+    setDataLoading(true);
+    setSelected(null);
+    setView(null);
+    setChat([]);
+    setCreatedInvites([]);
+    setSessions([]);
+    setLink("");
+    setConnection("Offline");
+    setError("");
+    setNotice(message);
+  }, []);
+
+  // A full load replaces the newest page; otherwise fetch messages after the
+  // last one shown. Loads run one at a time so cursors never interleave.
+  const loadChat = useCallback((roomID: string, full: boolean) => {
+    const next = chatQueue.current.then(async () => {
+      if (selectedRef.current !== roomID) return;
+      if (full) {
+        const page = await api<{ items: ChatMessage[] }>(
+          `/rooms/${roomID}/chat`,
+        );
+        if (selectedRef.current !== roomID) return;
+        lastChatID.current = page.items[page.items.length - 1]?.id ?? 0;
+        setChat(page.items);
+        return;
+      }
+      for (;;) {
+        const page = await api<{ items: ChatMessage[] }>(
+          `/rooms/${roomID}/chat?after=${lastChatID.current}`,
+        );
+        if (selectedRef.current !== roomID) return;
+        if (page.items.length > 0) {
+          lastChatID.current = page.items[page.items.length - 1].id;
+          setChat((current) => [...current, ...page.items].slice(-300));
+        }
+        if (page.items.length < 100) return;
+      }
+    });
+    chatQueue.current = next.catch(() => undefined);
+    return next;
+  }, []);
 
   const refresh = useCallback(async () => {
     const [r, f, i, b] = await Promise.all([
@@ -86,14 +154,17 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!user?.email_verified) return;
+    if (!userID || !verified) return;
     let active = true;
     const load = () =>
       refresh().catch((e: Error) => {
-        if (active) {
-          setDataLoading(false);
-          setError(e.message);
+        if (!active) return;
+        if (sessionEnded(e)) {
+          endSession(SESSION_ENDED);
+          return;
         }
+        setDataLoading(false);
+        setError(e.message);
       });
     void load();
     const timer = setInterval(() => void load(), 15000);
@@ -101,34 +172,45 @@ export function Dashboard() {
       active = false;
       clearInterval(timer);
     };
-  }, [user, refresh]);
+  }, [userID, verified, refresh, endSession]);
 
   useEffect(() => {
-    if (!selected || !user?.email_verified) return;
+    selectedRef.current = selected;
+  }, [selected]);
+
+  useEffect(() => {
+    const log = chatLog.current;
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [chat]);
+
+  useEffect(() => {
+    if (!selected || !userID || !verified) return;
     let active = true;
     let socket: WebSocket | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
-    const load = async () => {
-      const [v, messages, invites] = await Promise.all([
+    const loadRoom = async () => {
+      const [v, invites] = await Promise.all([
         api<RoomView>(`/rooms/${selected}`),
-        api<{ items: ChatMessage[] }>(`/rooms/${selected}/chat`),
         api<{ items: CreatedInvitation[] }>(`/rooms/${selected}/invitations`),
       ]);
       if (active) {
         setView(v);
-        setChat(messages.items);
         setCreatedInvites(invites.items);
       }
     };
+    const roomGone = () => {
+      setSelected(null);
+      setView(null);
+      setChat([]);
+      setNotice("This room is no longer available to you.");
+      void refresh().catch(() => undefined);
+    };
     const onLoadError = (e: Error) => {
       if (!active) return;
-      if (e instanceof APIError && e.status === 404) {
-        setSelected(null);
-        setView(null);
-        setNotice("This room is no longer available to you.");
-        void refresh();
-      } else setError(e.message);
+      if (sessionEnded(e)) endSession(SESSION_ENDED);
+      else if (e instanceof APIError && e.status === 404) roomGone();
+      else setError(e.message);
     };
     const connect = () => {
       if (!active) return;
@@ -147,7 +229,9 @@ export function Dashboard() {
             room_id: selected,
           }),
         );
-        void load().catch(onLoadError);
+        void Promise.all([loadRoom(), loadChat(selected, true)]).catch(
+          onLoadError,
+        );
       };
       socket.onmessage = (event) => {
         const message = JSON.parse(event.data) as {
@@ -156,13 +240,18 @@ export function Dashboard() {
         };
         if (message.type === "room.snapshot" && message.payload)
           setView(message.payload);
-        if (message.type === "room.updated" || message.type === "chat.updated")
-          void load().catch(onLoadError);
+        if (message.type === "room.updated") void loadRoom().catch(onLoadError);
+        if (message.type === "chat.updated")
+          void loadChat(selected, false).catch(onLoadError);
       };
       socket.onclose = (event) => {
         if (!active) return;
-        if (event.code === 1008) {
-          setConnection("Session ended");
+        if (event.code === CLOSE_SESSION_ENDED) {
+          endSession(SESSION_ENDED);
+          return;
+        }
+        if (event.code === CLOSE_ROOM_UNAVAILABLE) {
+          roomGone();
           return;
         }
         setConnection("Reconnecting");
@@ -179,20 +268,33 @@ export function Dashboard() {
       if (retry) clearTimeout(retry);
       socket?.close();
     };
-  }, [selected, user, refresh]);
+  }, [selected, userID, verified, refresh, loadChat, endSession]);
 
   async function run(work: () => Promise<void>) {
-    if (busy) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError("");
     setNotice("");
     try {
       await work();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Please try again");
+      if (sessionEnded(e)) endSession(SESSION_ENDED);
+      else setError(e instanceof Error ? e.message : "Please try again");
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
+  }
+  function openRoom(id: string | null) {
+    // Reselecting the open room would clear it without triggering a reload.
+    if (id === selected) return;
+    setSelected(id);
+    setView(null);
+    setChat([]);
+    setCreatedInvites([]);
+    setLink("");
+    lastChatID.current = 0;
   }
   function submit(
     event: FormEvent<HTMLFormElement>,
@@ -206,8 +308,7 @@ export function Dashboard() {
   async function join(payload: { token?: string; invitation_id?: string }) {
     const room = await api<Room>("/rooms/join", "POST", payload);
     await refresh();
-    setSelected(room.id);
-    setLink("");
+    openRoom(room.id);
     sessionStorage.removeItem("cardplay_invite");
     setInviteToken("");
   }
@@ -236,10 +337,7 @@ export function Dashboard() {
         <div className="nav-label">YOUR SPACE</div>
         <button
           className={`nav-item ${!selected ? "active" : ""}`}
-          onClick={() => {
-            setSelected(null);
-            setView(null);
-          }}
+          onClick={() => openRoom(null)}
         >
           ▦ <span>The lobby</span>
         </button>
@@ -254,11 +352,7 @@ export function Dashboard() {
             <button
               className={`nav-item ${selected === room.id ? "active" : ""}`}
               key={room.id}
-              onClick={() => {
-                setSelected(room.id);
-                setView(null);
-                setLink("");
-              }}
+              onClick={() => openRoom(room.id)}
             >
               {room.name}
               <span className="tiny-dot" />
@@ -290,12 +384,7 @@ export function Dashboard() {
                 onClick={() =>
                   void run(async () => {
                     await api("/auth/logout", "POST");
-                    setUser(null);
-                    setRooms([]);
-                    setFriends([]);
-                    setSelected(null);
-                    setView(null);
-                    setChat([]);
+                    endSession("");
                   })
                 }
               >
@@ -322,10 +411,7 @@ export function Dashboard() {
             <nav className="mobile-room-nav" aria-label="Room navigation">
               <button
                 className={!selected ? "active" : ""}
-                onClick={() => {
-                  setSelected(null);
-                  setView(null);
-                }}
+                onClick={() => openRoom(null)}
               >
                 Lobby
               </button>
@@ -333,11 +419,7 @@ export function Dashboard() {
                 <button
                   key={room.id}
                   className={selected === room.id ? "active" : ""}
-                  onClick={() => {
-                    setSelected(room.id);
-                    setView(null);
-                    setLink("");
-                  }}
+                  onClick={() => openRoom(room.id)}
                 >
                   {room.name}
                 </button>
@@ -610,8 +692,7 @@ export function Dashboard() {
                     await api("/me", "DELETE", {
                       password: data.get("password"),
                     });
-                    setUser(null);
-                    setNotice("Account deleted.");
+                    endSession("Account deleted.");
                   })
                 }
               >
@@ -785,8 +866,7 @@ export function Dashboard() {
                             if (!window.confirm("Close this private room?"))
                               return;
                             await api(`/rooms/${selected}`, "DELETE");
-                            setSelected(null);
-                            setView(null);
+                            openRoom(null);
                             await refresh();
                             setNotice("Room closed.");
                           })
@@ -802,8 +882,7 @@ export function Dashboard() {
                       onClick={() =>
                         void run(async () => {
                           await api(`/rooms/${selected}/leave`, "POST");
-                          setSelected(null);
-                          setView(null);
+                          openRoom(null);
                           await refresh();
                           setNotice("You left the room.");
                         })
@@ -929,6 +1008,7 @@ export function Dashboard() {
                   </div>
                   <div
                     className="chat-log"
+                    ref={chatLog}
                     role="log"
                     aria-live="polite"
                     aria-label="Room chat"
@@ -963,6 +1043,8 @@ export function Dashboard() {
                         });
                         chatDraft.current = null;
                         form.reset();
+                        // Show the message even if the socket is reconnecting.
+                        await loadChat(selected, false);
                       })
                     }
                   >
@@ -1057,7 +1139,7 @@ export function Dashboard() {
                           capacity: Number(data.get("capacity")),
                         });
                         await refresh();
-                        setSelected(room.id);
+                        openRoom(room.id);
                       })
                     }
                   >
@@ -1174,12 +1256,18 @@ export function Dashboard() {
                             disabled={busy}
                             onClick={() =>
                               void run(async () => {
-                                await api(
+                                const result = await api<
+                                  { status: string } | undefined
+                                >(
                                   `/friendships/${searchResult.id}/request`,
                                   "POST",
                                 );
                                 await refresh();
-                                setNotice("Friend request sent.");
+                                setNotice(
+                                  result?.status === "accepted"
+                                    ? `You and @${searchResult.handle} are now friends.`
+                                    : "Friend request sent.",
+                                );
                               })
                             }
                           >
@@ -1368,9 +1456,10 @@ export function Dashboard() {
                           setSessions(
                             sessions.filter((item) => item.id !== session.id),
                           );
-                          setNotice(
-                            "Session revoked. This page may sign out if it was your current session.",
-                          );
+                          // Fails with UNAUTHENTICATED, signing this page out,
+                          // when the revoked session was the current one.
+                          await api<User>("/me");
+                          setNotice("Session revoked.");
                         })
                       }
                     >
@@ -1386,9 +1475,7 @@ export function Dashboard() {
                         new_password: data.get("new_password"),
                       });
                       form.reset();
-                      setUser(null);
-                      setSelected(null);
-                      setNotice("Password changed. Sign in again.");
+                      endSession("Password changed. Sign in again.");
                     })
                   }
                 >
@@ -1431,12 +1518,8 @@ export function Dashboard() {
                       await api("/me", "DELETE", {
                         password: data.get("password"),
                       });
-                      setUser(null);
-                      setRooms([]);
-                      setFriends([]);
-                      setSelected(null);
                       form.reset();
-                      setNotice("Account deleted.");
+                      endSession("Account deleted.");
                     })
                   }
                 >

@@ -12,6 +12,7 @@ import (
 	"cardplay/internal/realtime"
 	"cardplay/internal/rooms"
 	"cardplay/internal/social"
+	"context"
 	"encoding/json"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -64,7 +65,7 @@ func New(db *pgxpool.Pool, c config.Config) *App {
 			httpx.JSON(w, 200, map[string]any{"items": games.Catalog()})
 		})
 		r.Group(func(r chi.Router) {
-			r.Use(newAuthLimiter())
+			r.Use(newAuthLimiter(auth.KnownDevice))
 			r.Post("/auth/register", auth.Register)
 			r.Post("/auth/verify", auth.Verify)
 			r.Post("/auth/verify/resend", auth.ResendVerification)
@@ -164,10 +165,13 @@ func newLimiter(limit int, window time.Duration) func(http.Handler) http.Handler
 }
 
 // Authentication requests need account-specific limits: when Next.js proxies
-// requests, many visitors share the same API-facing source address. A high
-// proxy-wide ceiling bounds total work while per-address/token limits stop
-// repeated guesses and mail floods without punishing other accounts.
-func newAuthLimiter() func(http.Handler) http.Handler {
+// requests, every visitor shares the API-facing source address and no client
+// address is forwarded. Mail endpoints allow three requests per email so nobody
+// can flood an inbox; other endpoints allow ten per email or token. Login from
+// a browser that has signed in to the account before (a known device cookie)
+// gets its own bucket, so failures sent by strangers cannot lock the owner out.
+// A high proxy-wide ceiling bounds total work.
+func newAuthLimiter(knownDevice func(ctx context.Context, token, email string) bool) func(http.Handler) http.Handler {
 	var mu sync.Mutex
 	entries := map[string]bucket{}
 	global := newLimiter(600, time.Minute)
@@ -186,7 +190,8 @@ func newAuthLimiter() func(http.Handler) http.Handler {
 				Token string `json:"token"`
 			}
 			_ = json.Unmarshal(body, &input)
-			identity := strings.ToLower(strings.TrimSpace(input.Email))
+			email := strings.ToLower(strings.TrimSpace(input.Email))
+			identity := email
 			if identity == "" {
 				identity = input.Token
 			}
@@ -197,6 +202,11 @@ func newAuthLimiter() func(http.Handler) http.Handler {
 			limit := 10
 			if strings.HasSuffix(r.URL.Path, "/register") || strings.HasSuffix(r.URL.Path, "/forgot") || strings.HasSuffix(r.URL.Path, "/resend") {
 				limit = 3
+			}
+			if strings.HasSuffix(r.URL.Path, "/login") && email != "" {
+				if c, err := r.Cookie(accounts.DeviceCookieName); err == nil && knownDevice(r.Context(), c.Value, email) {
+					key += ":device:" + httpx.Hash(c.Value)
+				}
 			}
 			now := time.Now()
 			mu.Lock()

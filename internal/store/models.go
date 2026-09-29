@@ -70,6 +70,13 @@ type Invitation struct {
 	AcceptedAt *time.Time  `json:"accepted_at"`
 }
 
+type LoginDevice struct {
+	TokenHash string    `json:"token_hash"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Match struct {
 	ID           string     `json:"id"`
 	RoomID       string     `json:"room_id"`

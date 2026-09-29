@@ -164,6 +164,22 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	if status != 200 || len(list["items"].([]any)) != 1 {
 		t.Fatalf("chat page=%d %v", status, list)
 	}
+	if _, err = pool.Exec(ctx, "INSERT INTO room_chat(room_id,user_id,client_id,body) SELECT $1,$2,gen_random_uuid(),'bulk '||n FROM generate_series(1,120) n ORDER BY n", room, alice); err != nil {
+		t.Fatal(err)
+	}
+	status, list = do("GET", "/api/v1/rooms/"+room+"/chat", aliceToken, nil)
+	latest := list["items"].([]any)
+	if status != 200 || len(latest) != 100 || latest[0].(map[string]any)["body"] != "bulk 21" || latest[99].(map[string]any)["body"] != "bulk 120" {
+		t.Fatalf("latest chat page=%d %d", status, len(latest))
+	}
+	status, list = do("GET", fmt.Sprintf("/api/v1/rooms/%s/chat?after=%.0f", room, first["id"]), aliceToken, nil)
+	older := list["items"].([]any)
+	if status != 200 || len(older) != 100 || older[0].(map[string]any)["body"] != "bulk 1" {
+		t.Fatalf("chat cursor page=%d %d", status, len(older))
+	}
+	if status, _ := do("POST", "/api/v1/rooms/"+room+"/matches", eveToken, nil); status != 404 {
+		t.Fatalf("nonmember start=%d", status)
+	}
 	if status, _ := do("POST", "/api/v1/rooms/"+room+"/matches", bobToken, nil); status != 403 {
 		t.Fatalf("nonhost start=%d", status)
 	}
@@ -190,11 +206,11 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	if status, _ := do("POST", "/api/v1/friendships/"+bob+"/request", aliceToken, nil); status != 204 {
 		t.Fatalf("friend request=%d", status)
 	}
-	if status, _ := do("POST", "/api/v1/friendships/"+alice+"/request", bobToken, nil); status != 204 {
-		t.Fatalf("crossed request=%d", status)
+	if status, crossed := do("POST", "/api/v1/friendships/"+alice+"/request", bobToken, nil); status != 200 || crossed["status"] != "accepted" {
+		t.Fatalf("crossed request=%d %v", status, crossed)
 	}
-	if status, _ := do("POST", "/api/v1/friendships/"+alice+"/accept", bobToken, nil); status != 204 {
-		t.Fatalf("friend accept=%d", status)
+	if status, _ := do("POST", "/api/v1/friendships/"+alice+"/accept", bobToken, nil); status != 409 {
+		t.Fatalf("accept after crossed request=%d", status)
 	}
 	if status, _ := do("POST", "/api/v1/friendships/"+bob+"/request", eveToken, nil); status != 204 {
 		t.Fatalf("decline setup=%d", status)
@@ -285,7 +301,7 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	if status, _ := do("GET", "/api/v1/rooms/"+hostRoom, aliceToken, nil); status != 404 {
 		t.Fatalf("closed room still readable=%d", status)
 	}
-	status, created = do("POST", "/api/v1/rooms", aliceToken, map[string]any{"name": "Transfer room", "capacity": 2})
+	status, created = do("POST", "/api/v1/rooms", aliceToken, map[string]any{"name": "Transfer room", "capacity": 3})
 	if status != 201 {
 		t.Fatalf("transfer room=%d", status)
 	}
@@ -296,6 +312,10 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	}
 	if status, _ := do("POST", "/api/v1/rooms/join", bobToken, map[string]any{"token": linkInvite["token"]}); status != 200 {
 		t.Fatalf("transfer join=%d", status)
+	}
+	status, leaverLink := do("POST", "/api/v1/rooms/"+transferRoom+"/invitations", bobToken, map[string]any{})
+	if status != 201 {
+		t.Fatalf("leaver link=%d", status)
 	}
 	if status, _ := do("PUT", "/api/v1/rooms/"+transferRoom+"/host", aliceToken, map[string]any{"user_id": bob}); status != 204 {
 		t.Fatalf("host transfer=%d", status)
@@ -309,6 +329,9 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	status, transferredView := do("GET", "/api/v1/rooms/"+transferRoom, aliceToken, nil)
 	if status != 200 || transferredView["room"].(map[string]any)["host_id"] != alice {
 		t.Fatalf("automatic host transfer=%d %v", status, transferredView)
+	}
+	if status, _ := do("POST", "/api/v1/rooms/join", eveToken, map[string]any{"token": leaverLink["token"]}); status != 404 {
+		t.Fatalf("departed member link still valid=%d", status)
 	}
 	status, created = do("POST", "/api/v1/rooms", aliceToken, map[string]any{"name": "Absent host", "capacity": 2})
 	if status != 201 {
@@ -404,8 +427,19 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	if err = q.CreateSession(ctx, store.CreateSessionParams{TokenHash: httpx.Hash(bobAgain), UserID: bob, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if status, _ := do("GET", "/api/v1/rooms/"+room, bobAgain, nil); status != 404 {
-		t.Fatalf("deleted host room remains readable=%d", status)
+	status, inherited := do("GET", "/api/v1/rooms/"+room, bobAgain, nil)
+	if status != 200 || inherited["room"].(map[string]any)["host_id"] != bob || len(inherited["members"].([]any)) != 1 {
+		t.Fatalf("deleted host room not handed on=%d %v", status, inherited)
+	}
+	unverifiedReset := httpx.Token()
+	if err = q.CreateAccountToken(ctx, store.CreateAccountTokenParams{TokenHash: httpx.Hash(unverifiedReset), UserID: unverified.ID, Purpose: "reset_password", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := do("POST", "/api/v1/auth/password/reset", "", map[string]any{"token": unverifiedReset, "password": "verified-by-reset-1"}); status != 200 {
+		t.Fatalf("unverified reset=%d", status)
+	}
+	if reset, err := q.UserByEmail(ctx, unverified.Email); err != nil || !reset.EmailVerified {
+		t.Fatalf("reset did not verify email: %v", err)
 	}
 	_ = alice
 	_ = bob
