@@ -487,6 +487,30 @@ func TestLiveMatch(t *testing.T) {
 		sockets[other] = back
 	})
 
+	t.Run("silent drop is detected by missed heartbeats", func(t *testing.T) {
+		// A socket that vanishes without closing stops heartbeating; the sweep
+		// then marks the seat absent and pauses the match.
+		if _, err := pool.Exec(ctx, "UPDATE match_participants SET last_seen_at=now()-interval '2 minutes' WHERE match_id=$1 AND user_id=$2", match, other); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.app.Hub.Matches.Sweep(ctx); err != nil {
+			t.Fatal(err)
+		}
+		sockets[active].state("paused by sweep", func(s map[string]any) bool { return s["status"] == "paused" })
+		// If that controller was only slow, its next heartbeat resumes play.
+		me, err := e.q.MatchParticipant(ctx, store.MatchParticipantParams{MatchID: match, UserID: other})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.app.Hub.Matches.Heartbeat(ctx, match, other, me.ControllerGeneration); err != nil {
+			t.Fatal(err)
+		}
+		sockets[active].state("resumed by heartbeat", func(s map[string]any) bool { return s["status"] == "playing" })
+		if err := a.app.Hub.Matches.Heartbeat(ctx, match, other, me.ControllerGeneration-1); err == nil {
+			t.Fatal("a replaced controller's heartbeat must fail")
+		}
+	})
+
 	t.Run("server restart keeps every acknowledged command", func(t *testing.T) {
 		before, err := a.app.Hub.Matches.StateFor(ctx, match, active, 0)
 		if err != nil {

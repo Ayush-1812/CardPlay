@@ -1,0 +1,11 @@
+{
+  "name": "cardplay-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "match": "node match-e2e.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "24.43.1"
+  }
+}

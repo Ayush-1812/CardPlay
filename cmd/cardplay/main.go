@@ -89,7 +89,7 @@ func run() error {
 			return errors.New("SEED_PASSWORD must be 12-128 bytes")
 		}
 		q := store.New(pool)
-		for _, name := range []string{"alice", "bob"} {
+		for _, name := range []string{"alice", "bob", "carol"} {
 			email := name + "@cardplay.test"
 			_, e := q.UserByEmail(ctx, email)
 			if e == nil {
@@ -103,7 +103,7 @@ func run() error {
 				return errors.New("seed creation failed")
 			}
 		}
-		slog.Info("seed accounts available", "accounts", "alice@cardplay.test, bob@cardplay.test")
+		slog.Info("seed accounts available", "accounts", "alice@cardplay.test, bob@cardplay.test, carol@cardplay.test")
 		return nil
 	case "serve":
 	default:

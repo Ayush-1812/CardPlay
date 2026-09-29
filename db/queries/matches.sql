@@ -13,8 +13,11 @@ SELECT * FROM match_participants WHERE match_id=$1 AND user_id=$2;
 UPDATE match_participants SET controller_generation=controller_generation+1,last_seen_at=now(),disconnected_at=NULL
 WHERE match_id=$1 AND user_id=$2 RETURNING controller_generation;
 -- name: ControllerHeartbeat :execrows
+UPDATE match_participants SET last_seen_at=now()
+WHERE match_id=$1 AND user_id=$2 AND controller_generation=$3 AND disconnected_at IS NULL;
+-- name: ControllerReturned :execrows
 UPDATE match_participants SET last_seen_at=now(),disconnected_at=NULL
-WHERE match_id=$1 AND user_id=$2 AND controller_generation=$3;
+WHERE match_id=$1 AND user_id=$2 AND controller_generation=$3 AND disconnected_at IS NOT NULL;
 -- name: ControllerDisconnected :execrows
 UPDATE match_participants SET disconnected_at=now()
 WHERE match_id=$1 AND user_id=$2 AND controller_generation=$3 AND disconnected_at IS NULL;

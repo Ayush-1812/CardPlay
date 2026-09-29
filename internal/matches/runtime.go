@@ -217,7 +217,28 @@ func (m *Module) Heartbeat(ctx context.Context, matchID, userID string, gen int6
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if n > 0 {
+		return nil
+	}
+	// The seat was marked absent (for example after late heartbeats) or a
+	// newer controller exists. A returning controller resumes the match.
+	returned := false
+	err = m.tx(ctx, func(q *store.Queries) error {
+		mt, err := q.LockMatch(ctx, matchID)
+		if err != nil {
+			return notFound(err)
+		}
+		n, err := q.ControllerReturned(ctx, store.ControllerReturnedParams{MatchID: matchID, UserID: userID, ControllerGeneration: gen})
+		if err != nil || n == 0 {
+			return err
+		}
+		returned = true
+		return touched(ctx, q, mt)
+	})
+	if err != nil {
+		return err
+	}
+	if !returned {
 		return ErrReplaced
 	}
 	return nil

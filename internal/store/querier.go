@@ -35,6 +35,7 @@ type Querier interface {
 	ConsumeAccountToken(ctx context.Context, arg ConsumeAccountTokenParams) (string, error)
 	ControllerDisconnected(ctx context.Context, arg ControllerDisconnectedParams) (int64, error)
 	ControllerHeartbeat(ctx context.Context, arg ControllerHeartbeatParams) (int64, error)
+	ControllerReturned(ctx context.Context, arg ControllerReturnedParams) (int64, error)
 	CreateAccountToken(ctx context.Context, arg CreateAccountTokenParams) error
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error)
 	CreateLoginDevice(ctx context.Context, arg CreateLoginDeviceParams) error

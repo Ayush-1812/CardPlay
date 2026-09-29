@@ -1,6 +1,6 @@
 # CardPlay
 
-CardPlay is a private multiplayer card-game site. The platform now includes verified accounts, password recovery, secure sessions, friend requests and blocks, private invitations, host-managed rooms, chat, a responsive Next.js client, and a versioned game boundary. The authoritative Monopoly Deal rules engine is implemented in `internal/game/monopoly` ([traceability](docs/08-monopoly-engine-traceability.md)). It is not yet wired to matches (roadmap M3), so starting a match still returns `GAME_NOT_READY`. Cambio is reserved for a later release.
+CardPlay is a private multiplayer card-game site. The platform now includes verified accounts, password recovery, secure sessions, friend requests and blocks, private invitations, host-managed rooms, chat, a responsive Next.js client, and a versioned game boundary. The authoritative Monopoly Deal rules engine is implemented in `internal/game/monopoly` ([traceability](docs/08-monopoly-engine-traceability.md)). Hosts start matches from a room once 2–5 players are ready. Play runs live over WebSockets with durable, exactly-once commands, per-player views, pause and resume, and recovery after restarts ([multiplayer and recovery](docs/09-multiplayer-and-recovery.md)). Cambio is reserved for a later release.
 
 The workspace lives in `CardPlayy`. The original PDFs and reference repository are research inputs only; no reference art is shipped.
 
@@ -15,7 +15,7 @@ docker compose --profile tools run --rm seed
 docker compose ps
 ```
 
-Open http://localhost:3000. The API readiness endpoint is http://localhost:8080/readyz and local verification/reset mail is visible at http://localhost:8025. Seed accounts are `alice@cardplay.test` and `bob@cardplay.test`, both verified. Their password is the local `SEED_PASSWORD` in ignored `.env`; never copy it into a commit or issue. `setup.mjs` is idempotent and does not replace an existing `.env`.
+Open http://localhost:3000. The API readiness endpoint is http://localhost:8080/readyz and local verification/reset mail is visible at http://localhost:8025. Seed accounts are `alice@cardplay.test`, `bob@cardplay.test` and `carol@cardplay.test`, all verified. Their password is the local `SEED_PASSWORD` in ignored `.env`; never copy it into a commit or issue. `setup.mjs` is idempotent and does not replace an existing `.env`.
 
 ```powershell
 docker compose logs -f api web
@@ -72,6 +72,6 @@ The checked-in Go output is in `internal/store`. Frontend versions are locked in
 
 Copy `.env.example` only for custom deployments; use `scripts/setup.mjs` for local development. Required values are validated at startup. Production requires an HTTPS `APP_ORIGIN`, PostgreSQL `sslmode=verify-full`, and authenticated SMTP with STARTTLS (`SMTP_ADDR`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`). Sessions use random HttpOnly cookies; only hashes are stored. Keep credentials in environment/secret storage, never in source control.
 
-The Go monolith separates `accounts`, `social`, `rooms`, `chat`, `matches`, `game`, and `realtime` behind chi routes. pgx/sqlc handles PostgreSQL; embedded, checksummed migrations run transactionally. A durable outbox drives WebSocket invalidations, and clients refetch authorized room views after reconnect. `Game` supplies versioned setup, validation, command application, and player-specific projection; the Monopoly module implements it in full but reports `playable: false` until durable matches exist.
+The Go monolith separates `accounts`, `social`, `rooms`, `chat`, `matches`, `game`, and `realtime` behind chi routes. pgx/sqlc handles PostgreSQL; embedded, checksummed migrations run transactionally. A durable outbox drives WebSocket invalidations, and clients refetch authorized room views after reconnect. `Game` supplies versioned setup, validation, command application, and player-specific projection; the Monopoly module implements it and `internal/matches` runs each match in serialized PostgreSQL transactions.
 
 The endpoint, WebSocket, error, authorization, and projection contract is in [docs/06-api-and-architecture.md](docs/06-api-and-architecture.md). A short social and room [manual verification checklist](docs/07-phase3-verification.md) is available. The rule specification and its decided questions are in [docs/02-monopoly-deal-rules.md](docs/02-monopoly-deal-rules.md); rules, code and tests are cross-referenced in [docs/08-monopoly-engine-traceability.md](docs/08-monopoly-engine-traceability.md). Product scope and release criteria are in [docs/01-product-requirements.md](docs/01-product-requirements.md) and [docs/05-roadmap-and-acceptance.md](docs/05-roadmap-and-acceptance.md).

@@ -104,8 +104,8 @@ func (q *Queries) ControllerDisconnected(ctx context.Context, arg ControllerDisc
 }
 
 const controllerHeartbeat = `-- name: ControllerHeartbeat :execrows
-UPDATE match_participants SET last_seen_at=now(),disconnected_at=NULL
-WHERE match_id=$1 AND user_id=$2 AND controller_generation=$3
+UPDATE match_participants SET last_seen_at=now()
+WHERE match_id=$1 AND user_id=$2 AND controller_generation=$3 AND disconnected_at IS NULL
 `
 
 type ControllerHeartbeatParams struct {
@@ -116,6 +116,25 @@ type ControllerHeartbeatParams struct {
 
 func (q *Queries) ControllerHeartbeat(ctx context.Context, arg ControllerHeartbeatParams) (int64, error) {
 	result, err := q.db.Exec(ctx, controllerHeartbeat, arg.MatchID, arg.UserID, arg.ControllerGeneration)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const controllerReturned = `-- name: ControllerReturned :execrows
+UPDATE match_participants SET last_seen_at=now(),disconnected_at=NULL
+WHERE match_id=$1 AND user_id=$2 AND controller_generation=$3 AND disconnected_at IS NOT NULL
+`
+
+type ControllerReturnedParams struct {
+	MatchID              string `json:"match_id"`
+	UserID               string `json:"user_id"`
+	ControllerGeneration int64  `json:"controller_generation"`
+}
+
+func (q *Queries) ControllerReturned(ctx context.Context, arg ControllerReturnedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, controllerReturned, arg.MatchID, arg.UserID, arg.ControllerGeneration)
 	if err != nil {
 		return 0, err
 	}
