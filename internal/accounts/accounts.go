@@ -393,7 +393,38 @@ func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, 403, "INVALID_CREDENTIALS", "Incorrect password")
 		return
 	}
-	steps := []func(context.Context, string) error{q.CloseHostedRooms, q.RemoveFromWaitingRooms, q.RevokeUserInvitations, q.DeleteFriendships, q.DeleteBlocks, q.DeleteAccountTokens, q.RevokeAllSessions}
+	closed, err := q.CloseHostedRooms(r.Context(), actor.ID)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	for _, roomID := range closed {
+		if err = q.RevokeRoomInvitations(r.Context(), roomID); err == nil {
+			err = q.Enqueue(r.Context(), store.EnqueueParams{RoomID: roomID, Kind: "room.updated", Payload: []byte(`{}`)})
+		}
+		if err != nil {
+			httpx.DBError(w, r, err)
+			return
+		}
+	}
+	left, err := q.RemoveFromWaitingRooms(r.Context(), actor.ID)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	for _, roomID := range left {
+		if err = q.ResetReady(r.Context(), roomID); err == nil {
+			err = q.BumpRoom(r.Context(), roomID)
+		}
+		if err == nil {
+			err = q.Enqueue(r.Context(), store.EnqueueParams{RoomID: roomID, Kind: "room.updated", Payload: []byte(`{}`)})
+		}
+		if err != nil {
+			httpx.DBError(w, r, err)
+			return
+		}
+	}
+	steps := []func(context.Context, string) error{q.RevokeUserInvitations, q.DeleteFriendships, q.DeleteBlocks, q.DeleteAccountTokens, q.RevokeAllSessions}
 	for _, step := range steps {
 		if err = step(r.Context(), actor.ID); err != nil {
 			httpx.DBError(w, r, err)

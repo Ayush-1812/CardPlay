@@ -95,7 +95,7 @@ func (m *Module) Change(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "block":
-		err = q.BlockUser(r.Context(), store.BlockUserParams{UserID: actor, BlockedID: other})
+		_, err = q.BlockUser(r.Context(), store.BlockUserParams{UserID: actor, BlockedID: other})
 		if err == nil {
 			err = q.RemoveFriend(r.Context(), store.RemoveFriendParams{RequesterID: actor, RecipientID: other})
 		}

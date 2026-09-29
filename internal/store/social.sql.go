@@ -42,8 +42,10 @@ func (q *Queries) AreFriends(ctx context.Context, arg AreFriendsParams) (bool, e
 	return exists, err
 }
 
-const blockUser = `-- name: BlockUser :exec
-INSERT INTO user_blocks(user_id,blocked_id) VALUES($1,$2) ON CONFLICT DO NOTHING
+const blockUser = `-- name: BlockUser :execrows
+INSERT INTO user_blocks(user_id,blocked_id)
+SELECT $1::uuid,u.id FROM users u WHERE u.id=$2::uuid AND u.deleted_at IS NULL AND u.email_verified
+ON CONFLICT DO NOTHING
 `
 
 type BlockUserParams struct {
@@ -51,9 +53,12 @@ type BlockUserParams struct {
 	BlockedID string `json:"blocked_id"`
 }
 
-func (q *Queries) BlockUser(ctx context.Context, arg BlockUserParams) error {
-	_, err := q.db.Exec(ctx, blockUser, arg.UserID, arg.BlockedID)
-	return err
+func (q *Queries) BlockUser(ctx context.Context, arg BlockUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, blockUser, arg.UserID, arg.BlockedID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const declineFriend = `-- name: DeclineFriend :execrows
@@ -90,7 +95,7 @@ func (q *Queries) HasBlock(ctx context.Context, arg HasBlockParams) (bool, error
 }
 
 const listBlocks = `-- name: ListBlocks :many
-SELECT u.id,u.handle,u.display_name FROM user_blocks b JOIN users u ON u.id=b.blocked_id WHERE b.user_id=$1 AND u.deleted_at IS NULL ORDER BY b.created_at DESC LIMIT 100
+SELECT u.id,u.handle,u.display_name FROM user_blocks b JOIN users u ON u.id=b.blocked_id WHERE b.user_id=$1 AND u.deleted_at IS NULL AND u.email_verified ORDER BY b.created_at DESC LIMIT 100
 `
 
 type ListBlocksRow struct {

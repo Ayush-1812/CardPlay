@@ -1310,6 +1310,9 @@ export function Dashboard() {
               </div>
               <section className="panel account-settings">
                 <h2>Your account</h2>
+                <p className="muted">
+                  @{user.handle} · {user.email}
+                </p>
                 <form
                   className="inline-form"
                   onSubmit={(event) =>

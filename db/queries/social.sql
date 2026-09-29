@@ -6,7 +6,7 @@ WHERE (f.requester_id=$1 OR f.recipient_id=$1) AND u.deleted_at IS NULL AND u.em
 SELECT u.id,u.handle,u.display_name FROM users u WHERE u.handle=sqlc.arg(handle)::text AND u.email_verified AND u.deleted_at IS NULL
 AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.user_id=sqlc.arg(actor_id)::uuid AND b.blocked_id=u.id) OR (b.user_id=u.id AND b.blocked_id=sqlc.arg(actor_id)::uuid));
 -- name: ListBlocks :many
-SELECT u.id,u.handle,u.display_name FROM user_blocks b JOIN users u ON u.id=b.blocked_id WHERE b.user_id=$1 AND u.deleted_at IS NULL ORDER BY b.created_at DESC LIMIT 100;
+SELECT u.id,u.handle,u.display_name FROM user_blocks b JOIN users u ON u.id=b.blocked_id WHERE b.user_id=$1 AND u.deleted_at IS NULL AND u.email_verified ORDER BY b.created_at DESC LIMIT 100;
 -- name: HasBlock :one
 SELECT EXISTS(SELECT 1 FROM user_blocks WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1));
 -- name: AreFriends :one
@@ -21,8 +21,10 @@ UPDATE friendships SET status='accepted' WHERE requester_id=$1 AND recipient_id=
 DELETE FROM friendships WHERE requester_id=$1 AND recipient_id=$2 AND status='pending';
 -- name: RemoveFriend :exec
 DELETE FROM friendships WHERE (requester_id=$1 AND recipient_id=$2) OR (requester_id=$2 AND recipient_id=$1);
--- name: BlockUser :exec
-INSERT INTO user_blocks(user_id,blocked_id) VALUES($1,$2) ON CONFLICT DO NOTHING;
+-- name: BlockUser :execrows
+INSERT INTO user_blocks(user_id,blocked_id)
+SELECT sqlc.arg(user_id)::uuid,u.id FROM users u WHERE u.id=sqlc.arg(blocked_id)::uuid AND u.deleted_at IS NULL AND u.email_verified
+ON CONFLICT DO NOTHING;
 -- name: UnblockUser :exec
 DELETE FROM user_blocks WHERE user_id=$1 AND blocked_id=$2;
 -- name: RevokePairInvitations :exec

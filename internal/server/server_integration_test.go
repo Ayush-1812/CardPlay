@@ -342,6 +342,25 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	if status != 200 || transferredView["room"].(map[string]any)["host_id"] != bob {
 		t.Fatalf("absent-host transfer=%d %v", status, transferredView)
 	}
+	status, created = do("POST", "/api/v1/rooms", aliceToken, map[string]any{"name": "Block invite", "capacity": 2})
+	if status != 201 {
+		t.Fatalf("block-invite room=%d", status)
+	}
+	blockRoom := created["id"].(string)
+	status, personal = do("POST", "/api/v1/rooms/"+blockRoom+"/invitations", aliceToken, map[string]any{"target_id": bob})
+	if status != 201 {
+		t.Fatalf("block-invite setup=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/friendships/"+bob+"/block", aliceToken, nil); status != 204 {
+		t.Fatalf("block friend=%d", status)
+	}
+	status, personalList := do("GET", "/api/v1/invitations", bobToken, nil)
+	if status != 200 || len(personalList["items"].([]any)) != 0 {
+		t.Fatalf("blocked invitation visible=%d %v", status, personalList)
+	}
+	if status, _ := do("POST", "/api/v1/rooms/join", bobToken, map[string]any{"invitation_id": personal["id"]}); status != 404 {
+		t.Fatalf("blocked invitation accepted=%d", status)
+	}
 	if status, _ := do("PATCH", "/api/v1/me", aliceToken, map[string]any{"display_name": "Alice New"}); status != 200 {
 		t.Fatalf("profile update=%d", status)
 	}
@@ -380,6 +399,13 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	}
 	if status, _ := do("GET", "/api/v1/me", newSession, nil); status != 401 {
 		t.Fatalf("deleted account session=%d", status)
+	}
+	bobAgain := httpx.Token()
+	if err = q.CreateSession(ctx, store.CreateSessionParams{TokenHash: httpx.Hash(bobAgain), UserID: bob, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := do("GET", "/api/v1/rooms/"+room, bobAgain, nil); status != 404 {
+		t.Fatalf("deleted host room remains readable=%d", status)
 	}
 	_ = alice
 	_ = bob

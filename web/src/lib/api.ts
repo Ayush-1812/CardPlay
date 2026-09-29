@@ -2,6 +2,7 @@ export type User = {
   id: string;
   handle: string;
   display_name: string;
+  email: string;
   email_verified: boolean;
 };
 export type Room = {
@@ -65,16 +66,34 @@ export async function api<T>(
   method = "GET",
   body?: unknown,
 ): Promise<T> {
-  const response = await fetch(`/api/v1${path}`, {
-    method,
-    credentials: "same-origin",
-    cache: "no-store",
-    headers:
-      body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1${path}`, {
+      method,
+      credentials: "same-origin",
+      cache: "no-store",
+      headers:
+        body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new APIError(
+      "NETWORK",
+      "Cannot reach CardPlay. Check your connection and try again.",
+      0,
+    );
+  }
   if (response.status === 204) return undefined as T;
-  const data = await response.json();
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new APIError(
+      "BAD_RESPONSE",
+      "CardPlay returned an unexpected response. Please try again.",
+      response.status,
+    );
+  }
   if (!response.ok)
     throw new APIError(
       data.error?.code ?? "INTERNAL",

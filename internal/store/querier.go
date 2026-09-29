@@ -18,13 +18,13 @@ type Querier interface {
 	AnonymizeUser(ctx context.Context, arg AnonymizeUserParams) error
 	AreFriends(ctx context.Context, arg AreFriendsParams) (bool, error)
 	BanMember(ctx context.Context, arg BanMemberParams) error
-	BlockUser(ctx context.Context, arg BlockUserParams) error
+	BlockUser(ctx context.Context, arg BlockUserParams) (int64, error)
 	BumpRoom(ctx context.Context, id string) error
 	ChangeDisplayName(ctx context.Context, arg ChangeDisplayNameParams) error
 	ChangePassword(ctx context.Context, arg ChangePasswordParams) error
 	ChatPage(ctx context.Context, arg ChatPageParams) ([]ChatPageRow, error)
 	ChatRecentCount(ctx context.Context, userID string) (int64, error)
-	CloseHostedRooms(ctx context.Context, hostID string) error
+	CloseHostedRooms(ctx context.Context, hostID string) ([]string, error)
 	CloseRoom(ctx context.Context, id string) error
 	ConsumeAccountToken(ctx context.Context, arg ConsumeAccountTokenParams) (string, error)
 	CreateAccountToken(ctx context.Context, arg CreateAccountTokenParams) error
@@ -66,7 +66,7 @@ type Querier interface {
 	PurgeChat(ctx context.Context) error
 	PurgeOutbox(ctx context.Context) error
 	RemoveFriend(ctx context.Context, arg RemoveFriendParams) error
-	RemoveFromWaitingRooms(ctx context.Context, userID string) error
+	RemoveFromWaitingRooms(ctx context.Context, userID string) ([]string, error)
 	RemoveMember(ctx context.Context, arg RemoveMemberParams) (int64, error)
 	RequestFriend(ctx context.Context, arg RequestFriendParams) (int64, error)
 	ResetReady(ctx context.Context, roomID string) error

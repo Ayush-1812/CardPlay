@@ -52,13 +52,28 @@ func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) 
 	return err
 }
 
-const closeHostedRooms = `-- name: CloseHostedRooms :exec
-UPDATE rooms SET status='closed',revision=revision+1 WHERE host_id=$1 AND status='waiting'
+const closeHostedRooms = `-- name: CloseHostedRooms :many
+UPDATE rooms SET status='closed',revision=revision+1 WHERE host_id=$1 AND status='waiting' RETURNING id
 `
 
-func (q *Queries) CloseHostedRooms(ctx context.Context, hostID string) error {
-	_, err := q.db.Exec(ctx, closeHostedRooms, hostID)
-	return err
+func (q *Queries) CloseHostedRooms(ctx context.Context, hostID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, closeHostedRooms, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const consumeAccountToken = `-- name: ConsumeAccountToken :one
@@ -236,13 +251,28 @@ func (q *Queries) ListSessions(ctx context.Context, userID string) ([]ListSessio
 	return items, nil
 }
 
-const removeFromWaitingRooms = `-- name: RemoveFromWaitingRooms :exec
-DELETE FROM room_members WHERE user_id=$1 AND room_id IN (SELECT id FROM rooms WHERE status='waiting')
+const removeFromWaitingRooms = `-- name: RemoveFromWaitingRooms :many
+DELETE FROM room_members WHERE user_id=$1 AND room_id IN (SELECT id FROM rooms WHERE status='waiting') RETURNING room_id
 `
 
-func (q *Queries) RemoveFromWaitingRooms(ctx context.Context, userID string) error {
-	_, err := q.db.Exec(ctx, removeFromWaitingRooms, userID)
-	return err
+func (q *Queries) RemoveFromWaitingRooms(ctx context.Context, userID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, removeFromWaitingRooms, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var room_id string
+		if err := rows.Scan(&room_id); err != nil {
+			return nil, err
+		}
+		items = append(items, room_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const revokeAllSessions = `-- name: RevokeAllSessions :exec

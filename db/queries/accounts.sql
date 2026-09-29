@@ -37,11 +37,11 @@ DELETE FROM friendships WHERE requester_id=$1 OR recipient_id=$1;
 DELETE FROM user_blocks WHERE user_id=$1 OR blocked_id=$1;
 -- name: RevokeUserInvitations :exec
 UPDATE invitations SET revoked_at=now() WHERE (inviter_id=$1 OR target_id=$1) AND revoked_at IS NULL;
--- name: CloseHostedRooms :exec
-UPDATE rooms SET status='closed',revision=revision+1 WHERE host_id=$1 AND status='waiting';
+-- name: CloseHostedRooms :many
+UPDATE rooms SET status='closed',revision=revision+1 WHERE host_id=$1 AND status='waiting' RETURNING id;
 -- name: AnonymizeUser :exec
 UPDATE users SET email='deleted+'||id::text||'@cardplay.invalid',handle='deleted_'||substr(replace(id::text,'-',''),1,16),display_name='Deleted player',password_hash=$2,email_verified=false,deleted_at=now() WHERE id=$1;
--- name: RemoveFromWaitingRooms :exec
-DELETE FROM room_members WHERE user_id=$1 AND room_id IN (SELECT id FROM rooms WHERE status='waiting');
+-- name: RemoveFromWaitingRooms :many
+DELETE FROM room_members WHERE user_id=$1 AND room_id IN (SELECT id FROM rooms WHERE status='waiting') RETURNING room_id;
 -- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at<=now();
