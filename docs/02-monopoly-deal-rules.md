@@ -1,6 +1,6 @@
 # Monopoly Deal rule specification
 
-Version: `monopoly-deal-us-01723-draft-1`. Status: source-backed rules plus explicitly pending decisions; not yet an executable rules contract.
+Version: `monopoly-deal-us-01723-draft-1`. Status: executable rules contract. Q1–Q3 were decided on 29 September 2026 (see [Decisions](#decisions-29-september-2026)); implemented in `internal/game/monopoly` and traced in [08](08-monopoly-engine-traceability.md).
 
 ## Sources, edition and notation
 
@@ -176,7 +176,16 @@ Three full sets of **distinct property colors**, on the table, while it is your 
 
 Edge coverage includes: five-card refill only at turn start; partial draws; draw and discard both empty; three plays exhausted while a response is pending; receiving property off-turn; duplicate-color sets; invalid/partial payments; exhausted table value; cannot pay rainbow wild; stolen set with buildings; banked JSN cannot respond; banked Pass Go cannot draw; counter chains of all three JSNs; no mid-response rearrangement; no counter to an ordinary bank/property placement; third-play Pass Go still requires hand reduction; full hand does not limit mid-turn draws; no extra plays after drawing; reconnect cannot skip obligations.
 
-## Material questions remaining after website review
+## Decisions (29 September 2026)
+
+The product owner adopted every proposal below and decided two follow-ups raised during implementation:
+
+- **Q1a** Forced Deal: neither the offered nor the taken card may come from a complete set. **Q1a-F2** a detached building may be taken but not offered.
+- **Q1b** On group charges a Just Say No protects only its defender, and only the source and that defender take part in a chain.
+- **Q2** Double the Rent works only with two-color Rent. A defender's Just Say No targets the whole charge or one doubler; counters restore that part. **Q2-F1** the defender may keep starting chains against other still-active parts until they accept.
+- **Q3** adopted in full (items 1–5 of the proposal below).
+
+## Material questions (historical record; now decided)
 
 The user supplied the website as an instruction reference rather than selecting the earlier proposed bundles. The findings below supersede those bundles: JSN cost and detached-building theft are now resolved. Other suggestions remain **unapproved**; no game implementation depends on them in this phase.
 
