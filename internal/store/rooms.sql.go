@@ -12,6 +12,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const absentHostRooms = `-- name: AbsentHostRooms :many
+SELECT r.id FROM rooms r JOIN room_members host ON host.room_id=r.id AND host.user_id=r.host_id
+WHERE r.status='waiting' AND host.last_seen_at < now()-interval '60 seconds'
+AND EXISTS(SELECT 1 FROM room_members m WHERE m.room_id=r.id AND m.user_id<>r.host_id AND m.last_seen_at>now()-interval '40 seconds')
+ORDER BY r.created_at LIMIT 100
+`
+
+func (q *Queries) AbsentHostRooms(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, absentHostRooms)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const acceptInvitation = `-- name: AcceptInvitation :exec
 UPDATE invitations SET accepted_at=now() WHERE id=$1 AND target_id IS NOT NULL
 `
@@ -124,6 +151,22 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 	return i, err
 }
 
+const hostStillAbsent = `-- name: HostStillAbsent :one
+SELECT EXISTS(SELECT 1 FROM room_members WHERE room_id=$1 AND user_id=$2 AND last_seen_at<now()-interval '60 seconds')
+`
+
+type HostStillAbsentParams struct {
+	RoomID string `json:"room_id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) HostStillAbsent(ctx context.Context, arg HostStillAbsentParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hostStillAbsent, arg.RoomID, arg.UserID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const invitation = `-- name: Invitation :one
 SELECT id, room_id, inviter_id, target_id, token_hash, expires_at, revoked_at, accepted_at FROM invitations WHERE id=$1
 `
@@ -165,7 +208,7 @@ func (q *Queries) InvitationByToken(ctx context.Context, tokenHash pgtype.Text) 
 }
 
 const isMember = `-- name: IsMember :one
-SELECT EXISTS(SELECT 1 FROM room_members WHERE room_id=$1 AND user_id=$2)
+SELECT EXISTS(SELECT 1 FROM room_members m JOIN rooms r ON r.id=m.room_id WHERE m.room_id=$1 AND m.user_id=$2 AND r.status<>'closed')
 `
 
 type IsMemberParams struct {
@@ -215,6 +258,23 @@ func (q *Queries) LockRoom(ctx context.Context, id string) (Room, error) {
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const markRoomSeen = `-- name: MarkRoomSeen :execrows
+UPDATE room_members SET last_seen_at=now() WHERE room_id=$1 AND user_id=$2
+`
+
+type MarkRoomSeenParams struct {
+	RoomID string `json:"room_id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) MarkRoomSeen(ctx context.Context, arg MarkRoomSeenParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markRoomSeen, arg.RoomID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const members = `-- name: Members :many
@@ -331,6 +391,23 @@ func (q *Queries) MyRooms(ctx context.Context, userID string) ([]Room, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const oldestActiveRoomMember = `-- name: OldestActiveRoomMember :one
+SELECT user_id FROM room_members WHERE room_id=$1 AND user_id<>$2 AND last_seen_at>now()-interval '40 seconds'
+ORDER BY joined_at,user_id LIMIT 1
+`
+
+type OldestActiveRoomMemberParams struct {
+	RoomID string `json:"room_id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) OldestActiveRoomMember(ctx context.Context, arg OldestActiveRoomMemberParams) (string, error) {
+	row := q.db.QueryRow(ctx, oldestActiveRoomMember, arg.RoomID, arg.UserID)
+	var user_id string
+	err := row.Scan(&user_id)
+	return user_id, err
 }
 
 const removeMember = `-- name: RemoveMember :execrows

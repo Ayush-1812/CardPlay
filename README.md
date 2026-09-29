@@ -1,6 +1,6 @@
 # CardPlay
 
-CardPlay is a private multiplayer card-game site. This Phase 2 foundation includes accounts, friends, invitations, rooms, chat, a responsive Next.js client, and a versioned game boundary. **The Monopoly Deal rules engine is not implemented yet**: rooms can be created, but matches return `GAME_NOT_READY`. Cambio is reserved for a later release.
+CardPlay is a private multiplayer card-game site. The platform now includes verified accounts, password recovery, secure sessions, friend requests and blocks, private invitations, host-managed rooms, chat, a responsive Next.js client, and a versioned game boundary. **The Monopoly Deal rules engine is not implemented yet**: rooms can be created, but matches return `GAME_NOT_READY`. Cambio is reserved for a later release.
 
 The workspace lives in `CardPlayy`. The original PDFs and reference repository are research inputs only; no reference art is shipped.
 
@@ -74,4 +74,4 @@ Copy `.env.example` only for custom deployments; use `scripts/setup.mjs` for loc
 
 The Go monolith separates `accounts`, `social`, `rooms`, `chat`, `matches`, `game`, and `realtime` behind chi routes. pgx/sqlc handles PostgreSQL; embedded, checksummed migrations run transactionally. A durable outbox drives WebSocket invalidations, and clients refetch authorized room views after reconnect. `Game` supplies versioned setup, validation, command application, and player-specific projection; only the Monopoly descriptor is registered today, with `playable: false`.
 
-The endpoint, WebSocket, error, authorization, and projection contract is in [docs/06-api-and-architecture.md](docs/06-api-and-architecture.md). Phase 1 decisions and remaining gameplay questions are in [docs/02-monopoly-deal-rules.md](docs/02-monopoly-deal-rules.md). Product scope and release criteria are in [docs/01-product-requirements.md](docs/01-product-requirements.md) and [docs/05-roadmap-and-acceptance.md](docs/05-roadmap-and-acceptance.md).
+The endpoint, WebSocket, error, authorization, and projection contract is in [docs/06-api-and-architecture.md](docs/06-api-and-architecture.md). A short social and room [manual verification checklist](docs/07-phase3-verification.md) is available. Phase 1 decisions and remaining gameplay questions are in [docs/02-monopoly-deal-rules.md](docs/02-monopoly-deal-rules.md). Product scope and release criteria are in [docs/01-product-requirements.md](docs/01-product-requirements.md) and [docs/05-roadmap-and-acceptance.md](docs/05-roadmap-and-acceptance.md).

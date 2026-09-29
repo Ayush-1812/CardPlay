@@ -328,6 +328,26 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (User, error) {
 	return i, err
 }
 
+const userByIDForUpdate = `-- name: UserByIDForUpdate :one
+SELECT id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
+`
+
+func (q *Queries) UserByIDForUpdate(ctx context.Context, id string) (User, error) {
+	row := q.db.QueryRow(ctx, userByIDForUpdate, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Handle,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.EmailVerified,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const verifyUser = `-- name: VerifyUser :exec
 UPDATE users SET email_verified=true WHERE id=$1
 `

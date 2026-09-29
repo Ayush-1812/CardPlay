@@ -99,6 +99,15 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					_ = conn.Close(websocket.StatusPolicyViolation, "Session expired")
 					return
 				}
+				h.mu.Lock()
+				room := c.room
+				h.mu.Unlock()
+				if room != "" {
+					if err := h.Rooms.Seen(ctx, room, c.actor); err != nil {
+						_ = conn.Close(websocket.StatusPolicyViolation, "Room unavailable")
+						return
+					}
+				}
 				pc, done := context.WithTimeout(ctx, 5*time.Second)
 				err := conn.Ping(pc)
 				done()
@@ -146,6 +155,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			view, err := h.Rooms.View(ctx, in.RoomID, c.actor)
 			if err != nil {
+				sendError("NOT_FOUND", "Room unavailable")
+				continue
+			}
+			if err = h.Rooms.Seen(ctx, in.RoomID, c.actor); err != nil {
 				sendError("NOT_FOUND", "Room unavailable")
 				continue
 			}
@@ -205,6 +218,8 @@ func (h *Hub) Run(ctx context.Context) {
 	defer t.Stop()
 	cleanup := time.NewTicker(time.Hour)
 	defer cleanup.Stop()
+	presence := time.NewTicker(5 * time.Second)
+	defer presence.Stop()
 	q := store.New(h.DB)
 	for {
 		select {
@@ -228,6 +243,8 @@ func (h *Hub) Run(ctx context.Context) {
 			_ = q.PurgeChat(ctx)
 			_ = q.PurgeOutbox(ctx)
 			_ = q.DeleteExpiredSessions(ctx)
+		case <-presence.C:
+			_ = h.Rooms.TransferAbsentHosts(ctx)
 		}
 	}
 }

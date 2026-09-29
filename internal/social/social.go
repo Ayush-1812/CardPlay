@@ -100,7 +100,7 @@ func (m *Module) Change(w http.ResponseWriter, r *http.Request) {
 			err = q.RemoveFriend(r.Context(), store.RemoveFriendParams{RequesterID: actor, RecipientID: other})
 		}
 		if err == nil {
-			err = q.RevokePairInvitations(r.Context(), store.RevokePairInvitationsParams{InviterID: actor, TargetID: other})
+			err = q.RevokePairInvitations(r.Context(), store.RevokePairInvitationsParams{ActorID: actor, OtherID: other})
 		}
 	case "unblock":
 		err = q.UnblockUser(r.Context(), store.UnblockUserParams{UserID: actor, BlockedID: other})

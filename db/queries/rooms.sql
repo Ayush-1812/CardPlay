@@ -19,7 +19,19 @@ SELECT r.* FROM rooms r JOIN room_members m ON m.room_id=r.id WHERE m.user_id=$1
 -- name: Members :many
 SELECT u.id,u.handle,u.display_name,m.seat,m.ready,m.joined_at FROM room_members m JOIN users u ON u.id=m.user_id WHERE m.room_id=$1 ORDER BY m.seat;
 -- name: IsMember :one
-SELECT EXISTS(SELECT 1 FROM room_members WHERE room_id=$1 AND user_id=$2);
+SELECT EXISTS(SELECT 1 FROM room_members m JOIN rooms r ON r.id=m.room_id WHERE m.room_id=$1 AND m.user_id=$2 AND r.status<>'closed');
+-- name: MarkRoomSeen :execrows
+UPDATE room_members SET last_seen_at=now() WHERE room_id=$1 AND user_id=$2;
+-- name: AbsentHostRooms :many
+SELECT r.id FROM rooms r JOIN room_members host ON host.room_id=r.id AND host.user_id=r.host_id
+WHERE r.status='waiting' AND host.last_seen_at < now()-interval '60 seconds'
+AND EXISTS(SELECT 1 FROM room_members m WHERE m.room_id=r.id AND m.user_id<>r.host_id AND m.last_seen_at>now()-interval '40 seconds')
+ORDER BY r.created_at LIMIT 100;
+-- name: HostStillAbsent :one
+SELECT EXISTS(SELECT 1 FROM room_members WHERE room_id=$1 AND user_id=$2 AND last_seen_at<now()-interval '60 seconds');
+-- name: OldestActiveRoomMember :one
+SELECT user_id FROM room_members WHERE room_id=$1 AND user_id<>$2 AND last_seen_at>now()-interval '40 seconds'
+ORDER BY joined_at,user_id LIMIT 1;
 -- name: AddMember :exec
 INSERT INTO room_members(room_id,user_id,seat) VALUES($1,$2,$3);
 -- name: RemoveMember :execrows

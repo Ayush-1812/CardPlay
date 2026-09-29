@@ -54,7 +54,7 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	}
 	alice, aliceToken := create("alice")
 	bob, bobToken := create("bob")
-	_, eveToken := create("eve")
+	eve, eveToken := create("eve")
 	c, err := config.Parse(func(key string) string {
 		switch key {
 		case "DATABASE_URL":
@@ -169,6 +169,161 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	}
 	if status, _ := do("POST", "/api/v1/rooms/"+room+"/matches", aliceToken, nil); status != 501 {
 		t.Fatalf("engine gate=%d", status)
+	}
+	status, found := do("GET", "/api/v1/users?handle=bob"+suffix, aliceToken, nil)
+	if status != 200 || found["id"] != bob || found["email"] != nil || found["password_hash"] != nil {
+		t.Fatalf("public search leaked data: %d %v", status, found)
+	}
+	unverified, err := q.CreateUser(ctx, store.CreateUserParams{Email: "hidden" + suffix + "@test.invalid", Handle: "hidden" + suffix, DisplayName: "Private", PasswordHash: accounts.PasswordHash("test-password-123"), EmailVerified: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := do("GET", "/api/v1/users?handle=hidden"+suffix, aliceToken, nil); status != 404 {
+		t.Fatalf("unverified search=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/friendships/"+unverified.ID+"/request", aliceToken, nil); status != 204 {
+		t.Fatalf("private friend request=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/rooms", aliceToken, map[string]any{"name": "Invalid", "capacity": 6}); status != 400 {
+		t.Fatalf("six-player room=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/friendships/"+bob+"/request", aliceToken, nil); status != 204 {
+		t.Fatalf("friend request=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/friendships/"+alice+"/request", bobToken, nil); status != 204 {
+		t.Fatalf("crossed request=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/friendships/"+alice+"/accept", bobToken, nil); status != 204 {
+		t.Fatalf("friend accept=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/friendships/"+bob+"/request", eveToken, nil); status != 204 {
+		t.Fatalf("decline setup=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/friendships/"+eve+"/decline", bobToken, nil); status != 204 {
+		t.Fatalf("friend decline=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/friendships/"+eve+"/block", aliceToken, nil); status != 204 {
+		t.Fatalf("block=%d", status)
+	}
+	if status, _ := do("GET", "/api/v1/users?handle=alice"+suffix, eveToken, nil); status != 404 {
+		t.Fatalf("blocked search=%d", status)
+	}
+	status, blocks := do("GET", "/api/v1/blocks", aliceToken, nil)
+	if status != 200 || len(blocks["items"].([]any)) != 1 || blocks["items"].([]any)[0].(map[string]any)["email"] != nil {
+		t.Fatalf("blocks leaked data: %d %v", status, blocks)
+	}
+	status, created = do("POST", "/api/v1/rooms", aliceToken, map[string]any{"name": "Host room", "capacity": 3})
+	if status != 201 {
+		t.Fatalf("host room=%d %v", status, created)
+	}
+	hostRoom := created["id"].(string)
+	status, linkInvite := do("POST", "/api/v1/rooms/"+hostRoom+"/invitations", aliceToken, map[string]any{})
+	if status != 201 {
+		t.Fatalf("host link=%d %v", status, linkInvite)
+	}
+	status, revokedLink := do("POST", "/api/v1/rooms/"+hostRoom+"/invitations", aliceToken, map[string]any{})
+	if status != 201 {
+		t.Fatalf("revoked link setup=%d", status)
+	}
+	if status, _ := do("DELETE", "/api/v1/invitations/"+revokedLink["id"].(string), aliceToken, nil); status != 204 {
+		t.Fatalf("revoke invitation=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/rooms/join", bobToken, map[string]any{"token": revokedLink["token"]}); status != 404 {
+		t.Fatalf("revoked link join=%d", status)
+	}
+	status, personal := do("POST", "/api/v1/rooms/"+hostRoom+"/invitations", aliceToken, map[string]any{"target_id": bob})
+	if status != 201 {
+		t.Fatalf("friend invite=%d %v", status, personal)
+	}
+	if status, _ := do("POST", "/api/v1/rooms/join", eveToken, map[string]any{"invitation_id": personal["id"]}); status != 404 {
+		t.Fatalf("wrong invite target=%d", status)
+	}
+	status, createdInvites := do("GET", "/api/v1/rooms/"+hostRoom+"/invitations", aliceToken, nil)
+	if status != 200 || len(createdInvites["items"].([]any)) != 3 || createdInvites["items"].([]any)[0].(map[string]any)["token_hash"] != nil {
+		t.Fatalf("invite list leaked token: %d %v", status, createdInvites)
+	}
+	if status, _ := do("GET", "/api/v1/rooms/"+hostRoom+"/invitations", eveToken, nil); status != 404 {
+		t.Fatalf("outsider invite list=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/rooms/join", bobToken, map[string]any{"invitation_id": personal["id"]}); status != 200 {
+		t.Fatalf("friend join=%d", status)
+	}
+	if status, _ := do("PATCH", "/api/v1/rooms/"+hostRoom, bobToken, map[string]any{"name": "Hijacked", "capacity": 2}); status != 404 {
+		t.Fatalf("nonhost room edit=%d", status)
+	}
+	if status, _ := do("PATCH", "/api/v1/rooms/"+hostRoom, aliceToken, map[string]any{"name": "Renamed", "capacity": 2}); status != 200 {
+		t.Fatalf("host room edit=%d", status)
+	}
+	if status, _ := do("PATCH", "/api/v1/rooms/"+hostRoom, aliceToken, map[string]any{"name": "Too small", "capacity": 1}); status != 400 {
+		t.Fatalf("invalid capacity=%d", status)
+	}
+	if status, _ := do("DELETE", "/api/v1/rooms/"+hostRoom+"/members/"+bob, bobToken, nil); status != 404 {
+		t.Fatalf("nonhost kick=%d", status)
+	}
+	if status, _ := do("DELETE", "/api/v1/rooms/"+hostRoom+"/members/"+bob, aliceToken, nil); status != 204 {
+		t.Fatalf("host kick=%d", status)
+	}
+	if status, _ := do("GET", "/api/v1/rooms/"+hostRoom, bobToken, nil); status != 404 {
+		t.Fatalf("kicked read=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/rooms/join", bobToken, map[string]any{"token": linkInvite["token"]}); status != 403 {
+		t.Fatalf("kicked rejoin=%d", status)
+	}
+	if status, _ := do("DELETE", "/api/v1/rooms/"+hostRoom, bobToken, nil); status != 404 {
+		t.Fatalf("nonhost close=%d", status)
+	}
+	if status, _ := do("DELETE", "/api/v1/rooms/"+hostRoom, aliceToken, nil); status != 204 {
+		t.Fatalf("host close=%d", status)
+	}
+	if status, _ := do("GET", "/api/v1/rooms/"+hostRoom, aliceToken, nil); status != 404 {
+		t.Fatalf("closed room still readable=%d", status)
+	}
+	status, created = do("POST", "/api/v1/rooms", aliceToken, map[string]any{"name": "Transfer room", "capacity": 2})
+	if status != 201 {
+		t.Fatalf("transfer room=%d", status)
+	}
+	transferRoom := created["id"].(string)
+	status, linkInvite = do("POST", "/api/v1/rooms/"+transferRoom+"/invitations", aliceToken, map[string]any{})
+	if status != 201 {
+		t.Fatalf("transfer invite=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/rooms/join", bobToken, map[string]any{"token": linkInvite["token"]}); status != 200 {
+		t.Fatalf("transfer join=%d", status)
+	}
+	if status, _ := do("PUT", "/api/v1/rooms/"+transferRoom+"/host", aliceToken, map[string]any{"user_id": bob}); status != 204 {
+		t.Fatalf("host transfer=%d", status)
+	}
+	if status, _ := do("DELETE", "/api/v1/rooms/"+transferRoom, aliceToken, nil); status != 404 {
+		t.Fatalf("former host close=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/rooms/"+transferRoom+"/leave", bobToken, nil); status != 204 {
+		t.Fatalf("host leave=%d", status)
+	}
+	status, transferredView := do("GET", "/api/v1/rooms/"+transferRoom, aliceToken, nil)
+	if status != 200 || transferredView["room"].(map[string]any)["host_id"] != alice {
+		t.Fatalf("automatic host transfer=%d %v", status, transferredView)
+	}
+	status, created = do("POST", "/api/v1/rooms", aliceToken, map[string]any{"name": "Absent host", "capacity": 2})
+	if status != 201 {
+		t.Fatalf("absent-host room=%d", status)
+	}
+	absentRoom := created["id"].(string)
+	status, linkInvite = do("POST", "/api/v1/rooms/"+absentRoom+"/invitations", aliceToken, map[string]any{})
+	if status != 201 {
+		t.Fatalf("absent-host invite=%d", status)
+	}
+	if status, _ := do("POST", "/api/v1/rooms/join", bobToken, map[string]any{"token": linkInvite["token"]}); status != 200 {
+		t.Fatalf("absent-host join=%d", status)
+	}
+	if _, err = pool.Exec(ctx, "UPDATE room_members SET last_seen_at=now()-interval '70 seconds' WHERE room_id=$1 AND user_id=$2", absentRoom, alice); err != nil {
+		t.Fatal(err)
+	}
+	if err = app.Hub.Rooms.TransferAbsentHosts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	status, transferredView = do("GET", "/api/v1/rooms/"+absentRoom, bobToken, nil)
+	if status != 200 || transferredView["room"].(map[string]any)["host_id"] != bob {
+		t.Fatalf("absent-host transfer=%d %v", status, transferredView)
 	}
 	if status, _ := do("PATCH", "/api/v1/me", aliceToken, map[string]any{"display_name": "Alice New"}); status != 200 {
 		t.Fatalf("profile update=%d", status)

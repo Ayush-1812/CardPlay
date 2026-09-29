@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"cardplay/internal/accounts"
 	"cardplay/internal/chat"
 	"cardplay/internal/config"
@@ -11,11 +12,14 @@ import (
 	"cardplay/internal/realtime"
 	"cardplay/internal/rooms"
 	"cardplay/internal/social"
+	"encoding/json"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -60,7 +64,7 @@ func New(db *pgxpool.Pool, c config.Config) *App {
 			httpx.JSON(w, 200, map[string]any{"items": games.Catalog()})
 		})
 		r.Group(func(r chi.Router) {
-			r.Use(newLimiter(10, time.Minute))
+			r.Use(newAuthLimiter())
 			r.Post("/auth/register", auth.Register)
 			r.Post("/auth/verify", auth.Verify)
 			r.Post("/auth/verify/resend", auth.ResendVerification)
@@ -73,21 +77,29 @@ func New(db *pgxpool.Pool, c config.Config) *App {
 			r.Get("/me", auth.Me)
 			r.Patch("/me", auth.UpdateMe)
 			r.Delete("/me", auth.DeleteMe)
+			r.Put("/me/password", auth.ChangeMyPassword)
 			r.Get("/sessions", auth.Sessions)
 			r.Delete("/sessions/{sessionID}", auth.RevokeSession)
 			r.Post("/auth/logout", auth.Logout)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.Verified, newLimiter(120, time.Minute))
-			r.Get("/users", friends.Search)
+			r.With(newLimiter(30, time.Minute)).Get("/users", friends.Search)
 			r.Get("/friendships", friends.List)
-			r.Post("/friendships/{userID}/{action}", friends.Change)
+			r.Get("/blocks", friends.Blocks)
+			r.With(newLimiter(20, time.Minute)).Post("/friendships/{userID}/{action}", friends.Change)
 			r.Get("/rooms", rm.List)
-			r.Post("/rooms", rm.Create)
-			r.Post("/rooms/join", rm.Join)
+			r.With(newLimiter(10, time.Minute)).Post("/rooms", rm.Create)
+			r.With(newLimiter(20, time.Minute)).Post("/rooms/join", rm.Join)
 			r.Get("/rooms/{roomID}", rm.Get)
+			r.Patch("/rooms/{roomID}", rm.Update)
+			r.Delete("/rooms/{roomID}", rm.Close)
+			r.Post("/rooms/{roomID}/leave", rm.Leave)
+			r.Put("/rooms/{roomID}/host", rm.TransferHost)
+			r.Delete("/rooms/{roomID}/members/{userID}", rm.Kick)
 			r.Put("/rooms/{roomID}/ready", rm.Ready)
-			r.Post("/rooms/{roomID}/invitations", rm.Invite)
+			r.Get("/rooms/{roomID}/invitations", rm.CreatedInvitations)
+			r.With(newLimiter(20, time.Minute)).Post("/rooms/{roomID}/invitations", rm.Invite)
 			r.Get("/invitations", rm.Invitations)
 			r.Delete("/invitations/{invitationID}", rm.Revoke)
 			r.Get("/rooms/{roomID}/chat", ch.List)
@@ -148,5 +160,69 @@ func newLimiter(limit int, window time.Duration) func(http.Handler) http.Handler
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// Authentication requests need account-specific limits: when Next.js proxies
+// requests, many visitors share the same API-facing source address. A high
+// proxy-wide ceiling bounds total work while per-address/token limits stop
+// repeated guesses and mail floods without punishing other accounts.
+func newAuthLimiter() func(http.Handler) http.Handler {
+	var mu sync.Mutex
+	entries := map[string]bucket{}
+	global := newLimiter(600, time.Minute)
+	return func(next http.Handler) http.Handler {
+		return global(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(io.LimitReader(r.Body, (16<<10)+1))
+			if err != nil || len(body) > 16<<10 {
+				httpx.Error(w, r, 400, "INVALID_REQUEST", "Request body is too large")
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var input struct {
+				Email string `json:"email"`
+				Token string `json:"token"`
+			}
+			_ = json.Unmarshal(body, &input)
+			identity := strings.ToLower(strings.TrimSpace(input.Email))
+			if identity == "" {
+				identity = input.Token
+			}
+			if identity == "" {
+				identity, _, _ = net.SplitHostPort(r.RemoteAddr)
+			}
+			key := r.URL.Path + ":" + httpx.Hash(identity)
+			limit := 10
+			if strings.HasSuffix(r.URL.Path, "/register") || strings.HasSuffix(r.URL.Path, "/forgot") || strings.HasSuffix(r.URL.Path, "/resend") {
+				limit = 3
+			}
+			now := time.Now()
+			mu.Lock()
+			if len(entries) >= 65536 {
+				for k, v := range entries {
+					if now.Sub(v.start) > time.Minute {
+						delete(entries, k)
+					}
+				}
+			}
+			if _, exists := entries[key]; !exists && len(entries) >= 65536 {
+				mu.Unlock()
+				httpx.Error(w, r, 429, "RATE_LIMITED", "Try again later")
+				return
+			}
+			b := entries[key]
+			if now.Sub(b.start) > time.Minute {
+				b = bucket{start: now}
+			}
+			b.count++
+			entries[key] = b
+			mu.Unlock()
+			if b.count > limit {
+				w.Header().Set("Retry-After", "60")
+				httpx.Error(w, r, 429, "RATE_LIMITED", "Try again later")
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
 	}
 }

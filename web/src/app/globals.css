@@ -489,6 +489,11 @@ input::placeholder {
 }
 .friend-row > span {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.friend-row > button {
+  flex-shrink: 0;
 }
 .friend-row small {
   font-size: 10px;
@@ -526,6 +531,17 @@ input::placeholder {
   border-top: 1px solid var(--line);
   padding-top: 20px;
   margin: 24px 0 0;
+}
+.room-controls {
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 20px;
+}
+.room-controls form {
+  margin-bottom: 18px;
+}
+.account-settings {
+  margin-top: 22px;
 }
 .chat-panel {
   grid-column: 1/-1;
@@ -653,6 +669,15 @@ footer > span:first-child {
   }
 }
 @media (max-width: 760px) {
+  .friend-row {
+    flex-wrap: wrap;
+  }
+  .form-row {
+    flex-wrap: wrap;
+  }
+  .form-row > * {
+    flex-basis: 180px;
+  }
   .sidebar {
     display: none;
   }

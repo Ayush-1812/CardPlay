@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	AbsentHostRooms(ctx context.Context) ([]string, error)
 	AcceptFriend(ctx context.Context, arg AcceptFriendParams) (int64, error)
 	AcceptInvitation(ctx context.Context, id string) error
 	AddMember(ctx context.Context, arg AddMemberParams) error
@@ -42,6 +43,7 @@ type Querier interface {
 	Enqueue(ctx context.Context, arg EnqueueParams) error
 	ExistingChat(ctx context.Context, arg ExistingChatParams) (RoomChat, error)
 	HasBlock(ctx context.Context, arg HasBlockParams) (bool, error)
+	HostStillAbsent(ctx context.Context, arg HostStillAbsentParams) (bool, error)
 	InsertChat(ctx context.Context, arg InsertChatParams) (RoomChat, error)
 	Invitation(ctx context.Context, id string) (Invitation, error)
 	InvitationByToken(ctx context.Context, tokenHash pgtype.Text) (Invitation, error)
@@ -54,10 +56,12 @@ type Querier interface {
 	ListSessions(ctx context.Context, userID string) ([]ListSessionsRow, error)
 	LockRoom(ctx context.Context, id string) (Room, error)
 	LockSocialPair(ctx context.Context, pair string) error
+	MarkRoomSeen(ctx context.Context, arg MarkRoomSeenParams) (int64, error)
 	Match(ctx context.Context, id string) (Match, error)
 	Members(ctx context.Context, roomID string) ([]MembersRow, error)
 	MyInvitations(ctx context.Context, userID string) ([]MyInvitationsRow, error)
 	MyRooms(ctx context.Context, userID string) ([]Room, error)
+	OldestActiveRoomMember(ctx context.Context, arg OldestActiveRoomMemberParams) (string, error)
 	PendingOutbox(ctx context.Context) ([]Outbox, error)
 	PurgeChat(ctx context.Context) error
 	PurgeOutbox(ctx context.Context) error
@@ -83,6 +87,7 @@ type Querier interface {
 	UnblockUser(ctx context.Context, arg UnblockUserParams) error
 	UpdateRoom(ctx context.Context, arg UpdateRoomParams) error
 	UserByEmail(ctx context.Context, email string) (User, error)
+	UserByIDForUpdate(ctx context.Context, id string) (User, error)
 	VerifyUser(ctx context.Context, id string) error
 	VisibleEvents(ctx context.Context, arg VisibleEventsParams) ([]VisibleEventsRow, error)
 }

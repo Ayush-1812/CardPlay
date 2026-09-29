@@ -128,11 +128,12 @@ type RoomChat struct {
 }
 
 type RoomMember struct {
-	RoomID   string    `json:"room_id"`
-	UserID   string    `json:"user_id"`
-	Seat     int32     `json:"seat"`
-	Ready    bool      `json:"ready"`
-	JoinedAt time.Time `json:"joined_at"`
+	RoomID     string    `json:"room_id"`
+	UserID     string    `json:"user_id"`
+	Seat       int32     `json:"seat"`
+	Ready      bool      `json:"ready"`
+	JoinedAt   time.Time `json:"joined_at"`
+	LastSeenAt time.Time `json:"last_seen_at"`
 }
 
 type Session struct {

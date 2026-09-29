@@ -187,12 +187,27 @@ func (m *Module) Invite(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, 409, "ROOM_STARTED", "Room is not waiting")
 		return
 	}
+	members, err := q.Members(r.Context(), id)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if int32(len(members)) >= room.Capacity {
+		httpx.Error(w, r, 409, "ROOM_FULL", "Room is full")
+		return
+	}
 	token := ""
 	hash := ""
 	if in.TargetID != "" {
 		if !httpx.UUID(in.TargetID) {
 			httpx.Error(w, r, 400, "INVALID_REQUEST", "Invalid target ID")
 			return
+		}
+		for _, member := range members {
+			if member.ID == in.TargetID {
+				httpx.Error(w, r, 409, "CONFLICT", "Friend is already in this room")
+				return
+			}
 		}
 		if err = q.LockSocialPair(r.Context(), social.Pair(actor, in.TargetID)); err != nil {
 			httpx.DBError(w, r, err)
@@ -283,6 +298,24 @@ func (m *Module) Join(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, 409, "ROOM_STARTED", "Room is not waiting")
 		return
 	}
+	banned, err := q.IsRoomBanned(ctx, store.IsRoomBannedParams{RoomID: room.ID, UserID: actor})
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if banned {
+		httpx.Error(w, r, 403, "FORBIDDEN", "This room is unavailable")
+		return
+	}
+	blocked, err := q.HasBlock(ctx, store.HasBlockParams{UserID: actor, BlockedID: invitation.InviterID})
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if blocked {
+		httpx.Error(w, r, 403, "FORBIDDEN", "This room is unavailable")
+		return
+	}
 	members, err := q.Members(ctx, room.ID)
 	if err != nil {
 		httpx.DBError(w, r, err)
@@ -307,7 +340,7 @@ func (m *Module) Join(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, 409, "ROOM_FULL", "Room is full")
 		return
 	}
-	// Membership has no removal endpoint yet; choose first free seat regardless.
+	// A departed member may leave a gap; use the first free seat.
 	used := map[int32]bool{}
 	for _, m := range members {
 		used[m.Seat] = true
@@ -350,11 +383,17 @@ func (m *Module) Revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.DBError(w, r, err)
 		return
 	}
-	if _, err = q.LockRoom(ctx, inv.RoomID); err != nil {
+	room, err := q.LockRoom(ctx, inv.RoomID)
+	if err != nil {
 		httpx.DBError(w, r, err)
 		return
 	}
-	n, err := q.RevokeInvitation(ctx, store.RevokeInvitationParams{ID: inv.ID, InviterID: httpx.Actor(r).ID})
+	var n int64
+	if room.HostID == httpx.Actor(r).ID {
+		n, err = q.RevokeInvitationByHost(ctx, inv.ID)
+	} else {
+		n, err = q.RevokeInvitation(ctx, store.RevokeInvitationParams{ID: inv.ID, InviterID: httpx.Actor(r).ID})
+	}
 	if err != nil {
 		httpx.DBError(w, r, err)
 		return

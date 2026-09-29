@@ -328,21 +328,16 @@ func (m *Module) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, 200, map[string]string{"display_name": in.DisplayName})
 }
-func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
+func (m *Module) ChangeMyPassword(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Password string `json:"password"`
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	actor := httpx.Actor(r)
-	u, err := store.New(m.DB).UserByEmail(r.Context(), actor.Email)
-	if err != nil {
-		httpx.DBError(w, r, err)
-		return
-	}
-	if !PasswordMatches(u.PasswordHash, in.Password) {
-		httpx.Error(w, r, 403, "INVALID_CREDENTIALS", "Incorrect password")
+	if len(in.NewPassword) < 12 || len(in.NewPassword) > 128 {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "New password must be 12-128 bytes")
 		return
 	}
 	tx, err := m.DB.Begin(r.Context())
@@ -352,6 +347,52 @@ func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	q := store.New(tx)
+	u, err := q.UserByIDForUpdate(r.Context(), httpx.Actor(r).ID)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if !PasswordMatches(u.PasswordHash, in.CurrentPassword) {
+		httpx.Error(w, r, 403, "INVALID_CREDENTIALS", "Incorrect current password")
+		return
+	}
+	if err = q.ChangePassword(r.Context(), store.ChangePasswordParams{ID: u.ID, PasswordHash: PasswordHash(in.NewPassword)}); err == nil {
+		err = q.RevokeAllSessions(r.Context(), u.ID)
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: CookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: m.Config.SecureCookie, SameSite: http.SameSiteLaxMode})
+	w.WriteHeader(204)
+}
+func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Password string `json:"password"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	actor := httpx.Actor(r)
+	tx, err := m.DB.Begin(r.Context())
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	q := store.New(tx)
+	u, err := q.UserByIDForUpdate(r.Context(), actor.ID)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if !PasswordMatches(u.PasswordHash, in.Password) {
+		httpx.Error(w, r, 403, "INVALID_CREDENTIALS", "Incorrect password")
+		return
+	}
 	steps := []func(context.Context, string) error{q.CloseHostedRooms, q.RemoveFromWaitingRooms, q.RevokeUserInvitations, q.DeleteFriendships, q.DeleteBlocks, q.DeleteAccountTokens, q.RevokeAllSessions}
 	for _, step := range steps {
 		if err = step(r.Context(), actor.ID); err != nil {

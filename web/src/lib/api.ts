@@ -37,6 +37,14 @@ export type Friend = {
   requester_id: string;
   recipient_id: string;
 };
+export type PublicUser = { id: string; handle: string; display_name: string };
+export type CreatedInvitation = {
+  id: string;
+  target_id: string | null;
+  expires_at: string;
+  revoked_at: string | null;
+  accepted_at: string | null;
+};
 export type Invitation = {
   id: string;
   room_id: string;

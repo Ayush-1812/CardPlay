@@ -6,8 +6,10 @@ import {
   api,
   APIError,
   ChatMessage,
+  CreatedInvitation,
   Friend,
   Invitation,
+  PublicUser,
   Room,
   RoomView,
   User,
@@ -21,10 +23,14 @@ export function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [roomList, setRooms] = useState<Room[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [blocks, setBlocks] = useState<PublicUser[]>([]);
+  const [searchResult, setSearchResult] = useState<PublicUser | null>(null);
+  const [dataLoading, setDataLoading] = useState(true);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<RoomView | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [createdInvites, setCreatedInvites] = useState<CreatedInvitation[]>([]);
   const [connection, setConnection] = useState("Offline");
   const [link, setLink] = useState("");
   const [authMode, setAuthMode] = useState<
@@ -37,14 +43,17 @@ export function Dashboard() {
   const chatDraft = useRef<{ body: string; id: string } | null>(null);
 
   const refresh = useCallback(async () => {
-    const [r, f, i] = await Promise.all([
+    const [r, f, i, b] = await Promise.all([
       api<{ items: Room[] }>("/rooms"),
       api<{ items: Friend[] }>("/friendships"),
       api<{ items: Invitation[] }>("/invitations"),
+      api<{ items: PublicUser[] }>("/blocks"),
     ]);
     setRooms(r.items);
     setFriends(f.items);
     setInvitations(i.items);
+    setBlocks(b.items);
+    setDataLoading(false);
   }, []);
 
   useEffect(() => {
@@ -81,7 +90,10 @@ export function Dashboard() {
     let active = true;
     const load = () =>
       refresh().catch((e: Error) => {
-        if (active) setError(e.message);
+        if (active) {
+          setDataLoading(false);
+          setError(e.message);
+        }
       });
     void load();
     const timer = setInterval(() => void load(), 15000);
@@ -98,14 +110,25 @@ export function Dashboard() {
     let retry: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
     const load = async () => {
-      const [v, messages] = await Promise.all([
+      const [v, messages, invites] = await Promise.all([
         api<RoomView>(`/rooms/${selected}`),
         api<{ items: ChatMessage[] }>(`/rooms/${selected}/chat`),
+        api<{ items: CreatedInvitation[] }>(`/rooms/${selected}/invitations`),
       ]);
       if (active) {
         setView(v);
         setChat(messages.items);
+        setCreatedInvites(invites.items);
       }
+    };
+    const onLoadError = (e: Error) => {
+      if (!active) return;
+      if (e instanceof APIError && e.status === 404) {
+        setSelected(null);
+        setView(null);
+        setNotice("This room is no longer available to you.");
+        void refresh();
+      } else setError(e.message);
     };
     const connect = () => {
       if (!active) return;
@@ -124,7 +147,7 @@ export function Dashboard() {
             room_id: selected,
           }),
         );
-        void load().catch((e: Error) => setError(e.message));
+        void load().catch(onLoadError);
       };
       socket.onmessage = (event) => {
         const message = JSON.parse(event.data) as {
@@ -134,7 +157,7 @@ export function Dashboard() {
         if (message.type === "room.snapshot" && message.payload)
           setView(message.payload);
         if (message.type === "room.updated" || message.type === "chat.updated")
-          void load().catch((e: Error) => setError(e.message));
+          void load().catch(onLoadError);
       };
       socket.onclose = (event) => {
         if (!active) return;
@@ -156,7 +179,7 @@ export function Dashboard() {
       if (retry) clearTimeout(retry);
       socket?.close();
     };
-  }, [selected, user]);
+  }, [selected, user, refresh]);
 
   async function run(work: () => Promise<void>) {
     if (busy) return;
@@ -188,7 +211,18 @@ export function Dashboard() {
     sessionStorage.removeItem("cardplay_invite");
     setInviteToken("");
   }
+  async function refreshCreatedInvites(roomID: string | null) {
+    if (!roomID) return;
+    const result = await api<{ items: CreatedInvitation[] }>(
+      `/rooms/${roomID}/invitations`,
+    );
+    setCreatedInvites(result.items);
+  }
   const approvedFriends = friends.filter((f) => f.status === "accepted");
+  const roomFull = !!view && view.members.length >= view.room.capacity;
+  const activeCreatedInvites = createdInvites.filter(
+    (invite) => !invite.revoked_at && !invite.accepted_at,
+  );
 
   return (
     <div className="app-shell">
@@ -213,6 +247,9 @@ export function Dashboard() {
           YOUR ROOMS <span>{roomList.length}</span>
         </div>
         <nav aria-label="Your rooms">
+          {user?.email_verified && !dataLoading && roomList.length === 0 && (
+            <small>No rooms yet</small>
+          )}
           {roomList.map((room) => (
             <button
               className={`nav-item ${selected === room.id ? "active" : ""}`}
@@ -579,6 +616,11 @@ export function Dashboard() {
               <div className="room-grid">
                 <section className="panel">
                   <h2>A seat for everyone</h2>
+                  {!view && (
+                    <p role="status" className="muted">
+                      Loading your private room…
+                    </p>
+                  )}
                   <p className="muted">
                     {view?.members.length ?? 0} of {view?.room.capacity ?? 5}{" "}
                     seats filled
@@ -622,6 +664,128 @@ export function Dashboard() {
                     Rooms and chat are open. Playable Monopoly Deal is coming in
                     the next milestone.
                   </p>
+                  {view &&
+                  view.room.status === "waiting" &&
+                  view.room.host_id === user.id ? (
+                    <div className="room-controls">
+                      <h2>Host controls</h2>
+                      <form
+                        onSubmit={(event) =>
+                          submit(event, async (data) => {
+                            await api(`/rooms/${selected}`, "PATCH", {
+                              name: data.get("name"),
+                              capacity: Number(data.get("capacity")),
+                            });
+                            await refresh();
+                            setNotice("Room updated.");
+                          })
+                        }
+                      >
+                        <label>
+                          Room name
+                          <input
+                            name="name"
+                            key={`${view.room.id}:${view.room.name}`}
+                            defaultValue={view.room.name}
+                            maxLength={80}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Maximum players
+                          <select
+                            name="capacity"
+                            key={`${view.room.id}:${view.room.capacity}`}
+                            defaultValue={view.room.capacity}
+                          >
+                            {[2, 3, 4, 5].map((n) => (
+                              <option key={n} value={n}>
+                                {n} players
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button className="secondary" disabled={busy}>
+                          Save room
+                        </button>
+                      </form>
+                      {view.members
+                        .filter((member) => member.id !== user.id)
+                        .map((member) => (
+                          <div className="friend-row" key={member.id}>
+                            <span>@{member.handle}</span>
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() =>
+                                void run(async () => {
+                                  await api(`/rooms/${selected}/host`, "PUT", {
+                                    user_id: member.id,
+                                  });
+                                  setNotice(`@${member.handle} is now host.`);
+                                })
+                              }
+                            >
+                              Make host
+                            </button>
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() =>
+                                void run(async () => {
+                                  if (
+                                    !window.confirm(
+                                      `Remove @${member.handle} from this room?`,
+                                    )
+                                  )
+                                    return;
+                                  await api(
+                                    `/rooms/${selected}/members/${member.id}`,
+                                    "DELETE",
+                                  );
+                                  setNotice(`@${member.handle} was removed.`);
+                                })
+                              }
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() =>
+                          void run(async () => {
+                            if (!window.confirm("Close this private room?"))
+                              return;
+                            await api(`/rooms/${selected}`, "DELETE");
+                            setSelected(null);
+                            setView(null);
+                            await refresh();
+                            setNotice("Room closed.");
+                          })
+                        }
+                      >
+                        Close room
+                      </button>
+                    </div>
+                  ) : view && view.room.status === "waiting" ? (
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          await api(`/rooms/${selected}/leave`, "POST");
+                          setSelected(null);
+                          setView(null);
+                          await refresh();
+                          setNotice("You left the room.");
+                        })
+                      }
+                    >
+                      Leave room
+                    </button>
+                  ) : null}
                 </section>
                 <section className="panel">
                   <h2>Invite your people</h2>
@@ -629,9 +793,15 @@ export function Dashboard() {
                     Links expire after 30 minutes. A seat is held only once your
                     friend joins.
                   </p>
+                  {roomFull && (
+                    <p className="notice" role="status">
+                      This room is full. Increase the limit or remove a player
+                      before inviting anyone else.
+                    </p>
+                  )}
                   <button
                     className="secondary"
-                    disabled={busy}
+                    disabled={busy || roomFull || !view}
                     onClick={() =>
                       void run(async () => {
                         const invite = await api<{ token: string }>(
@@ -640,6 +810,7 @@ export function Dashboard() {
                           {},
                         );
                         setLink(`${location.origin}/#invite=${invite.token}`);
+                        await refreshCreatedInvites(selected);
                       })
                     }
                   >
@@ -666,24 +837,61 @@ export function Dashboard() {
                       </button>
                     </label>
                   )}
-                  {approvedFriends.map((friend) => (
-                    <div className="friend-row" key={friend.id}>
-                      <span>@{friend.handle}</span>
+                  {approvedFriends
+                    .filter(
+                      (friend) =>
+                        !view?.members.some(
+                          (member) => member.id === friend.id,
+                        ),
+                    )
+                    .map((friend) => (
+                      <div className="friend-row" key={friend.id}>
+                        <span>@{friend.handle}</span>
+                        <button
+                          className="text-button"
+                          disabled={busy || roomFull || !view}
+                          onClick={() =>
+                            void run(async () => {
+                              await api(
+                                `/rooms/${selected}/invitations`,
+                                "POST",
+                                { target_id: friend.id },
+                              );
+                              await refreshCreatedInvites(selected);
+                              setNotice(
+                                `Invitation sent to @${friend.handle}.`,
+                              );
+                            })
+                          }
+                        >
+                          Invite
+                        </button>
+                      </div>
+                    ))}
+                  {activeCreatedInvites.length === 0 && (
+                    <p className="muted">No active invitations from you yet.</p>
+                  )}
+                  {activeCreatedInvites.map((invite) => (
+                    <div className="friend-row" key={invite.id}>
+                      <span>
+                        {invite.target_id ? "Friend invitation" : "Invite link"}
+                        <small>
+                          Expires {new Date(invite.expires_at).toLocaleString()}
+                        </small>
+                      </span>
                       <button
                         className="text-button"
                         disabled={busy}
                         onClick={() =>
                           void run(async () => {
-                            await api(
-                              `/rooms/${selected}/invitations`,
-                              "POST",
-                              { target_id: friend.id },
-                            );
-                            setNotice(`Invitation sent to @${friend.handle}.`);
+                            await api(`/invitations/${invite.id}`, "DELETE");
+                            setLink("");
+                            await refreshCreatedInvites(selected);
+                            setNotice("Invitation revoked.");
                           })
                         }
                       >
-                        Invite
+                        Revoke
                       </button>
                     </div>
                   ))}
@@ -781,6 +989,11 @@ export function Dashboard() {
                 <h2>Pick your next game</h2>
                 <span className="muted">One table. More ways to play.</span>
               </div>
+              {dataLoading && (
+                <p role="status" className="muted">
+                  Loading your rooms and friends…
+                </p>
+              )}
               <div className="game-grid">
                 <article className="game-card">
                   <div className="game-art">
@@ -889,19 +1102,23 @@ export function Dashboard() {
                       </button>
                     </div>
                   ))}
+                  {!dataLoading && invitations.length === 0 && (
+                    <p className="muted">
+                      No personal invitations right now. A link from a friend
+                      works here too.
+                    </p>
+                  )}
                 </section>
                 <section className="panel">
                   <h2>Better with friends</h2>
                   <form
                     className="inline-form"
                     onSubmit={(event) =>
-                      submit(event, async (data, form) => {
-                        const found = await api<{ id: string }>(
+                      submit(event, async (data) => {
+                        const found = await api<PublicUser>(
                           `/users?handle=${encodeURIComponent(String(data.get("handle")))}`,
                         );
-                        await api(`/friendships/${found.id}/request`, "POST");
-                        await refresh();
-                        form.reset();
+                        setSearchResult(found);
                       })
                     }
                   >
@@ -915,12 +1132,63 @@ export function Dashboard() {
                       placeholder="Find by exact handle"
                     />
                     <button className="secondary" disabled={busy}>
-                      Add
+                      Find
                     </button>
                   </form>
-                  {friends.length === 0 && (
+                  {searchResult && (
+                    <div className="friend-row">
+                      <span>
+                        {searchResult.display_name}
+                        <small>@{searchResult.handle}</small>
+                      </span>
+                      {searchResult.id !== user.id && (
+                        <>
+                          <button
+                            className="text-button"
+                            disabled={busy}
+                            onClick={() =>
+                              void run(async () => {
+                                await api(
+                                  `/friendships/${searchResult.id}/request`,
+                                  "POST",
+                                );
+                                await refresh();
+                                setNotice("Friend request sent.");
+                              })
+                            }
+                          >
+                            Request
+                          </button>
+                          <button
+                            className="text-button"
+                            disabled={busy}
+                            onClick={() =>
+                              void run(async () => {
+                                await api(
+                                  `/friendships/${searchResult.id}/block`,
+                                  "POST",
+                                );
+                                setSearchResult(null);
+                                await refresh();
+                                setNotice("Account blocked.");
+                              })
+                            }
+                          >
+                            Block
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {dataLoading && (
+                    <p role="status" className="muted">
+                      Loading friends and invitations…
+                    </p>
+                  )}
+                  {!dataLoading && friends.length === 0 && (
                     <p className="muted">
-                      Invite someone you know. Start a new tradition.
+                      No friends yet. Search by an exact handle to send a
+                      request.
                     </p>
                   )}
                   {friends.map((friend) => (
@@ -959,14 +1227,56 @@ export function Dashboard() {
                         onClick={() =>
                           void run(async () => {
                             await api(
-                              `/friendships/${friend.id}/remove`,
+                              `/friendships/${friend.id}/${friend.status === "pending" && friend.recipient_id === user.id ? "decline" : "remove"}`,
                               "POST",
                             );
                             await refresh();
                           })
                         }
                       >
-                        {friend.status === "accepted" ? "Remove" : "Dismiss"}
+                        {friend.status === "accepted"
+                          ? "Remove"
+                          : friend.recipient_id === user.id
+                            ? "Decline"
+                            : "Cancel"}
+                      </button>
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() =>
+                          void run(async () => {
+                            await api(
+                              `/friendships/${friend.id}/block`,
+                              "POST",
+                            );
+                            await refresh();
+                            setNotice(`@${friend.handle} blocked.`);
+                          })
+                        }
+                      >
+                        Block
+                      </button>
+                    </div>
+                  ))}
+                  {blocks.length > 0 && <h3>Blocked accounts</h3>}
+                  {blocks.map((blocked) => (
+                    <div className="friend-row" key={blocked.id}>
+                      <span>@{blocked.handle}</span>
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() =>
+                          void run(async () => {
+                            await api(
+                              `/friendships/${blocked.id}/unblock`,
+                              "POST",
+                            );
+                            await refresh();
+                            setNotice(`@${blocked.handle} unblocked.`);
+                          })
+                        }
+                      >
+                        Unblock
                       </button>
                     </div>
                   ))}
@@ -1039,6 +1349,47 @@ export function Dashboard() {
                     </button>
                   </div>
                 ))}
+                <form
+                  onSubmit={(event) =>
+                    submit(event, async (data, form) => {
+                      await api("/me/password", "PUT", {
+                        current_password: data.get("current_password"),
+                        new_password: data.get("new_password"),
+                      });
+                      form.reset();
+                      setUser(null);
+                      setSelected(null);
+                      setNotice("Password changed. Sign in again.");
+                    })
+                  }
+                >
+                  <h3>Change password</h3>
+                  <div className="form-row">
+                    <label>
+                      Current password
+                      <input
+                        name="current_password"
+                        type="password"
+                        autoComplete="current-password"
+                        required
+                      />
+                    </label>
+                    <label>
+                      New password
+                      <input
+                        name="new_password"
+                        type="password"
+                        autoComplete="new-password"
+                        minLength={12}
+                        maxLength={128}
+                        required
+                      />
+                    </label>
+                  </div>
+                  <button className="secondary" disabled={busy}>
+                    Update password
+                  </button>
+                </form>
                 <form
                   onSubmit={(event) =>
                     submit(event, async (data, form) => {
