@@ -328,23 +328,6 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (User, error) {
 	return i, err
 }
 
-const userByHandle = `-- name: UserByHandle :one
-SELECT id,handle,display_name FROM users WHERE handle=$1
-`
-
-type UserByHandleRow struct {
-	ID          string `json:"id"`
-	Handle      string `json:"handle"`
-	DisplayName string `json:"display_name"`
-}
-
-func (q *Queries) UserByHandle(ctx context.Context, handle string) (UserByHandleRow, error) {
-	row := q.db.QueryRow(ctx, userByHandle, handle)
-	var i UserByHandleRow
-	err := row.Scan(&i.ID, &i.Handle, &i.DisplayName)
-	return i, err
-}
-
 const verifyUser = `-- name: VerifyUser :exec
 UPDATE users SET email_verified=true WHERE id=$1
 `

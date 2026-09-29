@@ -18,12 +18,25 @@ func Pair(a, b string) string {
 	return a + ":" + b
 }
 func (m *Module) Search(w http.ResponseWriter, r *http.Request) {
-	u, err := store.New(m.DB).UserByHandle(r.Context(), strings.ToLower(r.URL.Query().Get("handle")))
+	handle := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("handle")))
+	if len(handle) < 3 || len(handle) > 24 {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Search by an exact 3-24 character handle")
+		return
+	}
+	u, err := store.New(m.DB).SearchPublicUser(r.Context(), store.SearchPublicUserParams{Handle: handle, ActorID: httpx.Actor(r).ID})
 	if err != nil {
 		httpx.DBError(w, r, err)
 		return
 	}
 	httpx.JSON(w, 200, u)
+}
+func (m *Module) Blocks(w http.ResponseWriter, r *http.Request) {
+	items, err := store.New(m.DB).ListBlocks(r.Context(), httpx.Actor(r).ID)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	httpx.JSON(w, 200, map[string]any{"items": items})
 }
 func (m *Module) List(w http.ResponseWriter, r *http.Request) {
 	items, err := store.New(m.DB).ListFriendships(r.Context(), httpx.Actor(r).ID)
@@ -58,13 +71,13 @@ func (m *Module) Change(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if blocked && (action == "request" || action == "accept") {
-		httpx.Error(w, r, 403, "FORBIDDEN", "This relationship is unavailable")
+		httpx.Error(w, r, 404, "NOT_FOUND", "User unavailable")
 		return
 	}
 	switch action {
 	case "request":
 		// Crossed requests keep a single pending pair: only the recipient accepts.
-		err = q.RequestFriend(r.Context(), store.RequestFriendParams{RequesterID: actor, RecipientID: other})
+		_, err = q.RequestFriend(r.Context(), store.RequestFriendParams{RequesterID: actor, RecipientID: other})
 	case "accept":
 		var n int64
 		n, err = q.AcceptFriend(r.Context(), store.AcceptFriendParams{RequesterID: other, RecipientID: actor})
@@ -74,10 +87,20 @@ func (m *Module) Change(w http.ResponseWriter, r *http.Request) {
 		}
 	case "remove":
 		err = q.RemoveFriend(r.Context(), store.RemoveFriendParams{RequesterID: actor, RecipientID: other})
+	case "decline":
+		var n int64
+		n, err = q.DeclineFriend(r.Context(), store.DeclineFriendParams{RequesterID: other, RecipientID: actor})
+		if err == nil && n == 0 {
+			httpx.Error(w, r, 409, "CONFLICT", "No incoming request to decline")
+			return
+		}
 	case "block":
 		err = q.BlockUser(r.Context(), store.BlockUserParams{UserID: actor, BlockedID: other})
 		if err == nil {
 			err = q.RemoveFriend(r.Context(), store.RemoveFriendParams{RequesterID: actor, RecipientID: other})
+		}
+		if err == nil {
+			err = q.RevokePairInvitations(r.Context(), store.RevokePairInvitationsParams{InviterID: actor, TargetID: other})
 		}
 	case "unblock":
 		err = q.UnblockUser(r.Context(), store.UnblockUserParams{UserID: actor, BlockedID: other})

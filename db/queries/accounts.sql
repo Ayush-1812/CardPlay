@@ -2,8 +2,6 @@
 INSERT INTO users(email,handle,display_name,password_hash,email_verified) VALUES ($1,$2,$3,$4,$5) RETURNING *;
 -- name: UserByEmail :one
 SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL;
--- name: UserByHandle :one
-SELECT id,handle,display_name FROM users WHERE handle=$1;
 -- name: CreateSession :exec
 INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,$3);
 -- name: SessionUser :one

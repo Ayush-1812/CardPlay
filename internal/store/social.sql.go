@@ -56,6 +56,23 @@ func (q *Queries) BlockUser(ctx context.Context, arg BlockUserParams) error {
 	return err
 }
 
+const declineFriend = `-- name: DeclineFriend :execrows
+DELETE FROM friendships WHERE requester_id=$1 AND recipient_id=$2 AND status='pending'
+`
+
+type DeclineFriendParams struct {
+	RequesterID string `json:"requester_id"`
+	RecipientID string `json:"recipient_id"`
+}
+
+func (q *Queries) DeclineFriend(ctx context.Context, arg DeclineFriendParams) (int64, error) {
+	result, err := q.db.Exec(ctx, declineFriend, arg.RequesterID, arg.RecipientID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const hasBlock = `-- name: HasBlock :one
 SELECT EXISTS(SELECT 1 FROM user_blocks WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1))
 `
@@ -72,10 +89,40 @@ func (q *Queries) HasBlock(ctx context.Context, arg HasBlockParams) (bool, error
 	return exists, err
 }
 
+const listBlocks = `-- name: ListBlocks :many
+SELECT u.id,u.handle,u.display_name FROM user_blocks b JOIN users u ON u.id=b.blocked_id WHERE b.user_id=$1 AND u.deleted_at IS NULL ORDER BY b.created_at DESC LIMIT 100
+`
+
+type ListBlocksRow struct {
+	ID          string `json:"id"`
+	Handle      string `json:"handle"`
+	DisplayName string `json:"display_name"`
+}
+
+func (q *Queries) ListBlocks(ctx context.Context, userID string) ([]ListBlocksRow, error) {
+	rows, err := q.db.Query(ctx, listBlocks, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBlocksRow{}
+	for rows.Next() {
+		var i ListBlocksRow
+		if err := rows.Scan(&i.ID, &i.Handle, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFriendships = `-- name: ListFriendships :many
 SELECT f.requester_id,f.recipient_id,f.status,u.id,u.handle,u.display_name
 FROM friendships f JOIN users u ON u.id=CASE WHEN f.requester_id=$1 THEN f.recipient_id ELSE f.requester_id END
-WHERE f.requester_id=$1 OR f.recipient_id=$1 ORDER BY f.created_at DESC LIMIT 100
+WHERE (f.requester_id=$1 OR f.recipient_id=$1) AND u.deleted_at IS NULL AND u.email_verified ORDER BY f.created_at DESC LIMIT 100
 `
 
 type ListFriendshipsRow struct {
@@ -137,8 +184,10 @@ func (q *Queries) RemoveFriend(ctx context.Context, arg RemoveFriendParams) erro
 	return err
 }
 
-const requestFriend = `-- name: RequestFriend :exec
-INSERT INTO friendships(requester_id,recipient_id) VALUES($1,$2) ON CONFLICT DO NOTHING
+const requestFriend = `-- name: RequestFriend :execrows
+INSERT INTO friendships(requester_id,recipient_id)
+SELECT $1::uuid,u.id FROM users u WHERE u.id=$2::uuid AND u.deleted_at IS NULL AND u.email_verified
+ON CONFLICT DO NOTHING
 `
 
 type RequestFriendParams struct {
@@ -146,9 +195,49 @@ type RequestFriendParams struct {
 	RecipientID string `json:"recipient_id"`
 }
 
-func (q *Queries) RequestFriend(ctx context.Context, arg RequestFriendParams) error {
-	_, err := q.db.Exec(ctx, requestFriend, arg.RequesterID, arg.RecipientID)
+func (q *Queries) RequestFriend(ctx context.Context, arg RequestFriendParams) (int64, error) {
+	result, err := q.db.Exec(ctx, requestFriend, arg.RequesterID, arg.RecipientID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokePairInvitations = `-- name: RevokePairInvitations :exec
+UPDATE invitations SET revoked_at=now() WHERE ((inviter_id=$1::uuid AND target_id=$2::uuid) OR (inviter_id=$2::uuid AND target_id=$1::uuid)) AND revoked_at IS NULL
+`
+
+type RevokePairInvitationsParams struct {
+	ActorID string `json:"actor_id"`
+	OtherID string `json:"other_id"`
+}
+
+func (q *Queries) RevokePairInvitations(ctx context.Context, arg RevokePairInvitationsParams) error {
+	_, err := q.db.Exec(ctx, revokePairInvitations, arg.ActorID, arg.OtherID)
 	return err
+}
+
+const searchPublicUser = `-- name: SearchPublicUser :one
+SELECT u.id,u.handle,u.display_name FROM users u WHERE u.handle=$1::text AND u.email_verified AND u.deleted_at IS NULL
+AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.user_id=$2::uuid AND b.blocked_id=u.id) OR (b.user_id=u.id AND b.blocked_id=$2::uuid))
+`
+
+type SearchPublicUserParams struct {
+	Handle  string `json:"handle"`
+	ActorID string `json:"actor_id"`
+}
+
+type SearchPublicUserRow struct {
+	ID          string `json:"id"`
+	Handle      string `json:"handle"`
+	DisplayName string `json:"display_name"`
+}
+
+func (q *Queries) SearchPublicUser(ctx context.Context, arg SearchPublicUserParams) (SearchPublicUserRow, error) {
+	row := q.db.QueryRow(ctx, searchPublicUser, arg.Handle, arg.ActorID)
+	var i SearchPublicUserRow
+	err := row.Scan(&i.ID, &i.Handle, &i.DisplayName)
+	return i, err
 }
 
 const unblockUser = `-- name: UnblockUser :exec

@@ -4,6 +4,7 @@ sql:
     schema:
       - db/migrations/000001_foundation.up.sql
       - db/migrations/000002_accounts.up.sql
+      - db/migrations/000003_room_bans.up.sql
     queries: db/queries
     gen:
       go:

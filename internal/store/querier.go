@@ -16,6 +16,7 @@ type Querier interface {
 	AddMember(ctx context.Context, arg AddMemberParams) error
 	AnonymizeUser(ctx context.Context, arg AnonymizeUserParams) error
 	AreFriends(ctx context.Context, arg AreFriendsParams) (bool, error)
+	BanMember(ctx context.Context, arg BanMemberParams) error
 	BlockUser(ctx context.Context, arg BlockUserParams) error
 	BumpRoom(ctx context.Context, id string) error
 	ChangeDisplayName(ctx context.Context, arg ChangeDisplayNameParams) error
@@ -23,12 +24,14 @@ type Querier interface {
 	ChatPage(ctx context.Context, arg ChatPageParams) ([]ChatPageRow, error)
 	ChatRecentCount(ctx context.Context, userID string) (int64, error)
 	CloseHostedRooms(ctx context.Context, hostID string) error
+	CloseRoom(ctx context.Context, id string) error
 	ConsumeAccountToken(ctx context.Context, arg ConsumeAccountTokenParams) (string, error)
 	CreateAccountToken(ctx context.Context, arg CreateAccountTokenParams) error
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error)
 	CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeclineFriend(ctx context.Context, arg DeclineFriendParams) (int64, error)
 	DeleteAccountTokens(ctx context.Context, userID string) error
 	DeleteBlocks(ctx context.Context, userID string) error
 	DeleteExpiredSessions(ctx context.Context) error
@@ -44,7 +47,9 @@ type Querier interface {
 	InvitationByToken(ctx context.Context, tokenHash pgtype.Text) (Invitation, error)
 	IsMember(ctx context.Context, arg IsMemberParams) (bool, error)
 	IsParticipant(ctx context.Context, arg IsParticipantParams) (bool, error)
+	IsRoomBanned(ctx context.Context, arg IsRoomBannedParams) (bool, error)
 	LatestSnapshot(ctx context.Context, matchID string) (GameSnapshot, error)
+	ListBlocks(ctx context.Context, userID string) ([]ListBlocksRow, error)
 	ListFriendships(ctx context.Context, requesterID string) ([]ListFriendshipsRow, error)
 	ListSessions(ctx context.Context, userID string) ([]ListSessionsRow, error)
 	LockRoom(ctx context.Context, id string) (Room, error)
@@ -58,18 +63,26 @@ type Querier interface {
 	PurgeOutbox(ctx context.Context) error
 	RemoveFriend(ctx context.Context, arg RemoveFriendParams) error
 	RemoveFromWaitingRooms(ctx context.Context, userID string) error
-	RequestFriend(ctx context.Context, arg RequestFriendParams) error
+	RemoveMember(ctx context.Context, arg RemoveMemberParams) (int64, error)
+	RequestFriend(ctx context.Context, arg RequestFriendParams) (int64, error)
 	ResetReady(ctx context.Context, roomID string) error
 	RevokeAllSessions(ctx context.Context, userID string) error
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
+	RevokeInvitationByHost(ctx context.Context, id string) (int64, error)
+	RevokePairInvitations(ctx context.Context, arg RevokePairInvitationsParams) error
+	RevokeRoomInvitations(ctx context.Context, roomID string) error
 	RevokeSession(ctx context.Context, arg RevokeSessionParams) (int64, error)
+	RevokeTargetRoomInvitations(ctx context.Context, arg RevokeTargetRoomInvitationsParams) error
 	RevokeUserInvitations(ctx context.Context, inviterID string) error
 	Room(ctx context.Context, id string) (Room, error)
+	RoomInvitationsByCreator(ctx context.Context, arg RoomInvitationsByCreatorParams) ([]RoomInvitationsByCreatorRow, error)
+	SearchPublicUser(ctx context.Context, arg SearchPublicUserParams) (SearchPublicUserRow, error)
 	SessionUser(ctx context.Context, tokenHash string) (SessionUserRow, error)
 	SetReady(ctx context.Context, arg SetReadyParams) error
+	SetRoomHost(ctx context.Context, arg SetRoomHostParams) error
 	UnblockUser(ctx context.Context, arg UnblockUserParams) error
+	UpdateRoom(ctx context.Context, arg UpdateRoomParams) error
 	UserByEmail(ctx context.Context, email string) (User, error)
-	UserByHandle(ctx context.Context, handle string) (UserByHandleRow, error)
 	VerifyUser(ctx context.Context, id string) error
 	VisibleEvents(ctx context.Context, arg VisibleEventsParams) ([]VisibleEventsRow, error)
 }

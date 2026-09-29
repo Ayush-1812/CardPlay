@@ -111,6 +111,13 @@ type Room struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type RoomBan struct {
+	RoomID    string    `json:"room_id"`
+	UserID    string    `json:"user_id"`
+	ActorID   string    `json:"actor_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type RoomChat struct {
 	ID        int64     `json:"id"`
 	RoomID    string    `json:"room_id"`

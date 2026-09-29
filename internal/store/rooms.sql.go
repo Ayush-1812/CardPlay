@@ -36,12 +36,36 @@ func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
 	return err
 }
 
+const banMember = `-- name: BanMember :exec
+INSERT INTO room_bans(room_id,user_id,actor_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING
+`
+
+type BanMemberParams struct {
+	RoomID  string `json:"room_id"`
+	UserID  string `json:"user_id"`
+	ActorID string `json:"actor_id"`
+}
+
+func (q *Queries) BanMember(ctx context.Context, arg BanMemberParams) error {
+	_, err := q.db.Exec(ctx, banMember, arg.RoomID, arg.UserID, arg.ActorID)
+	return err
+}
+
 const bumpRoom = `-- name: BumpRoom :exec
 UPDATE rooms SET revision=revision+1 WHERE id=$1
 `
 
 func (q *Queries) BumpRoom(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, bumpRoom, id)
+	return err
+}
+
+const closeRoom = `-- name: CloseRoom :exec
+UPDATE rooms SET status='closed' WHERE id=$1
+`
+
+func (q *Queries) CloseRoom(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, closeRoom, id)
 	return err
 }
 
@@ -156,6 +180,22 @@ func (q *Queries) IsMember(ctx context.Context, arg IsMemberParams) (bool, error
 	return exists, err
 }
 
+const isRoomBanned = `-- name: IsRoomBanned :one
+SELECT EXISTS(SELECT 1 FROM room_bans WHERE room_id=$1 AND user_id=$2)
+`
+
+type IsRoomBannedParams struct {
+	RoomID string `json:"room_id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) IsRoomBanned(ctx context.Context, arg IsRoomBannedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isRoomBanned, arg.RoomID, arg.UserID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const lockRoom = `-- name: LockRoom :one
 SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at FROM rooms WHERE id=$1 FOR UPDATE
 `
@@ -219,7 +259,10 @@ func (q *Queries) Members(ctx context.Context, roomID string) ([]MembersRow, err
 
 const myInvitations = `-- name: MyInvitations :many
 SELECT i.id,i.room_id,i.inviter_id,i.expires_at,r.name FROM invitations i JOIN rooms r ON r.id=i.room_id
-WHERE i.target_id=$1::uuid AND i.expires_at>now() AND i.revoked_at IS NULL AND i.accepted_at IS NULL AND r.status='waiting' ORDER BY i.expires_at LIMIT 100
+WHERE i.target_id=$1::uuid AND i.expires_at>now() AND i.revoked_at IS NULL AND i.accepted_at IS NULL AND r.status='waiting'
+AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.user_id=i.inviter_id AND b.blocked_id=i.target_id) OR (b.user_id=i.target_id AND b.blocked_id=i.inviter_id))
+AND NOT EXISTS(SELECT 1 FROM room_bans b WHERE b.room_id=i.room_id AND b.user_id=i.target_id)
+ORDER BY i.expires_at LIMIT 100
 `
 
 type MyInvitationsRow struct {
@@ -290,6 +333,23 @@ func (q *Queries) MyRooms(ctx context.Context, userID string) ([]Room, error) {
 	return items, nil
 }
 
+const removeMember = `-- name: RemoveMember :execrows
+DELETE FROM room_members WHERE room_id=$1 AND user_id=$2
+`
+
+type RemoveMemberParams struct {
+	RoomID string `json:"room_id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) RemoveMember(ctx context.Context, arg RemoveMemberParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeMember, arg.RoomID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const resetReady = `-- name: ResetReady :exec
 UPDATE room_members SET ready=false WHERE room_id=$1
 `
@@ -316,6 +376,41 @@ func (q *Queries) RevokeInvitation(ctx context.Context, arg RevokeInvitationPara
 	return result.RowsAffected(), nil
 }
 
+const revokeInvitationByHost = `-- name: RevokeInvitationByHost :execrows
+UPDATE invitations SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeInvitationByHost(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeInvitationByHost, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeRoomInvitations = `-- name: RevokeRoomInvitations :exec
+UPDATE invitations SET revoked_at=now() WHERE room_id=$1 AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeRoomInvitations(ctx context.Context, roomID string) error {
+	_, err := q.db.Exec(ctx, revokeRoomInvitations, roomID)
+	return err
+}
+
+const revokeTargetRoomInvitations = `-- name: RevokeTargetRoomInvitations :exec
+UPDATE invitations SET revoked_at=now() WHERE room_id=$1::uuid AND target_id=$2::uuid AND revoked_at IS NULL
+`
+
+type RevokeTargetRoomInvitationsParams struct {
+	RoomID   string `json:"room_id"`
+	TargetID string `json:"target_id"`
+}
+
+func (q *Queries) RevokeTargetRoomInvitations(ctx context.Context, arg RevokeTargetRoomInvitationsParams) error {
+	_, err := q.db.Exec(ctx, revokeTargetRoomInvitations, arg.RoomID, arg.TargetID)
+	return err
+}
+
 const room = `-- name: Room :one
 SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at FROM rooms WHERE id=$1
 `
@@ -337,6 +432,49 @@ func (q *Queries) Room(ctx context.Context, id string) (Room, error) {
 	return i, err
 }
 
+const roomInvitationsByCreator = `-- name: RoomInvitationsByCreator :many
+SELECT id,target_id,expires_at,revoked_at,accepted_at FROM invitations WHERE room_id=$1 AND inviter_id=$2 AND expires_at>now() ORDER BY expires_at DESC LIMIT 100
+`
+
+type RoomInvitationsByCreatorParams struct {
+	RoomID    string `json:"room_id"`
+	InviterID string `json:"inviter_id"`
+}
+
+type RoomInvitationsByCreatorRow struct {
+	ID         string     `json:"id"`
+	TargetID   *string    `json:"target_id"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+	AcceptedAt *time.Time `json:"accepted_at"`
+}
+
+func (q *Queries) RoomInvitationsByCreator(ctx context.Context, arg RoomInvitationsByCreatorParams) ([]RoomInvitationsByCreatorRow, error) {
+	rows, err := q.db.Query(ctx, roomInvitationsByCreator, arg.RoomID, arg.InviterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoomInvitationsByCreatorRow{}
+	for rows.Next() {
+		var i RoomInvitationsByCreatorRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetID,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+			&i.AcceptedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setReady = `-- name: SetReady :exec
 UPDATE room_members SET ready=$3 WHERE room_id=$1 AND user_id=$2
 `
@@ -349,5 +487,34 @@ type SetReadyParams struct {
 
 func (q *Queries) SetReady(ctx context.Context, arg SetReadyParams) error {
 	_, err := q.db.Exec(ctx, setReady, arg.RoomID, arg.UserID, arg.Ready)
+	return err
+}
+
+const setRoomHost = `-- name: SetRoomHost :exec
+UPDATE rooms SET host_id=$2 WHERE id=$1
+`
+
+type SetRoomHostParams struct {
+	ID     string `json:"id"`
+	HostID string `json:"host_id"`
+}
+
+func (q *Queries) SetRoomHost(ctx context.Context, arg SetRoomHostParams) error {
+	_, err := q.db.Exec(ctx, setRoomHost, arg.ID, arg.HostID)
+	return err
+}
+
+const updateRoom = `-- name: UpdateRoom :exec
+UPDATE rooms SET name=$2,capacity=$3 WHERE id=$1
+`
+
+type UpdateRoomParams struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Capacity int32  `json:"capacity"`
+}
+
+func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) error {
+	_, err := q.db.Exec(ctx, updateRoom, arg.ID, arg.Name, arg.Capacity)
 	return err
 }
