@@ -1,0 +1,16 @@
+{
+  "review_date": "2026-09-29",
+  "reference_commit": "a5b6dc50741f4e656b0025819c3131080b22e843",
+  "pdfs": [
+    {
+      "path": "Monopoly Deal Card Game Instructions.pdf",
+      "sha256": "47acfc2eef0cc9d9cfc35793b435a7434de05f6bfdb97d5ae0602d869e956278"
+    },
+    {
+      "path": "Instructions.pdf",
+      "sha256": "ffc7c9bc75115ecf1abdd8c8930d23e45126da65f9da9a17dee3488969c2ef5d"
+    }
+  ],
+  "website": "https://monopolydealrules.com/index.php?page=instructionbook",
+  "method": "Complete PDF text read; B1 render visually read; website booklet and property/wild/rent photos visually read; static reference code review; no build or runtime tests."
+}

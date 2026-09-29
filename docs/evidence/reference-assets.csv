@@ -1,0 +1,17 @@
+path,bytes,sha256,reuse_status
+client/public/apple-touch-icon.png,8178,0ab9d1816ce359a4cbcb457d05dcb63099302d358fbbc8005c15d679555e6652,HOLD: provenance/license not established for this file
+client/public/favicon-16x16.png,399,42300797ba314411c38b4f5e88804c35d710447de4853d540c55039befba63e6,HOLD: provenance/license not established for this file
+client/public/favicon-32x32.png,793,a43628b27220ddd44c7328be790170cffc81a3e440f437a7cb8a3555b490b491,HOLD: provenance/license not established for this file
+client/public/icon.svg,1951,9e15abe1d8c9a74112e9efeb34e523ab3419d77e9e660b228a6ca38850f36f24,HOLD: provenance/license not established for this file
+client/public/pwa-192x192.png,8917,28f375a9e9dc78b5714bfc66e6014d11ee7e2f496f9cc94ff2c06faaa6400f57,HOLD: provenance/license not established for this file
+client/public/pwa-512x512.png,29715,bda2d39bea88de5f8428fd9943ffc045a76238df7be473d8a6af18bb8129f41b,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-1-469423.mp3,6306048,31ee9867d82e3c32f100c8e5ebf440a0fd47b668b8556caf3730afd4b4f19a38,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-10-469436.mp3,5923584,6109120aacb0c6d84bcabe6375cb0dca4d3b7ce331f188c809d47b7d454b79d1,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-2-469424.mp3,6691584,41d0af1fba4a53a529287179cf9d7211a6dc892b20efc2c9d2d1b2b79cdfa207,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-3-469425.mp3,8001024,dc09579920d3e95e2e37f5da746dfd267f41036c32dffc5281834299270c1064,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-4-469426.mp3,7185408,ea60a40759534d9e465bde749fa4844686315dd41c0b3bd0dd409c5dd8e73ae5,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-5-469428.mp3,9120768,19b97f878ab83fe6e760320a8f54cc472936f917eec2071b37c04b68f87f06a0,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-6-469429.mp3,6655488,02eda80b1d3381521e0d6caedddc275d12c6a27696016796058477c8892ae0b9,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-7-469430.mp3,7438848,80daf6b7a48befe8e60bb140f784ba5dbe45be5c20c3486424270b810c709f58,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-8-469431.mp3,7838208,1a677458d1c65f76fd1e25fab66aac2d9c3a6e07e461dafa187f320a4e4bda9e,HOLD: provenance/license not established for this file
+server/src/assets/mp3/soundtracks/casino-vip-music-minimal-casino-background-9-469435.mp3,5985024,d10ebff495354667202b9a44d280be44fb25244edb9c9625a7e7c0cf5e139a8e,HOLD: provenance/license not established for this file

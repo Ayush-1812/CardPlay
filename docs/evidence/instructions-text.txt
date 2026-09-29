@@ -1,0 +1,393 @@
+=== PDF PAGE 1 ===
+MONOPOLY DEAL
+
+
+ A detailed, practical rules guide covering every category in your screenshot: general,
+
+ payment, property, action, Just Say No, Deal Breaker, rent, house and hotel, how to play,
+
+ cards and contents, instruction booklet, and about the game.
+
+
+     At a glance
+
+      For 2-5 players. Collect three complete property sets on the table. Begin with five cards, draw two
+
+      at the start of each turn, play up to three cards, and finish with at most seven cards in hand. The
+
+      card text and edition-specific booklet take priority if your deck differs.
+
+
+
+ 1. How to play
+
+  • Prepare: Set aside the four Quick Start reference cards, shuffle the playing deck, deal five face-down
+
+    cards to each player, and place the rest face-down as the draw pile. Choose a first player; play proceeds
+
+     clockwise.
+
+  • Draw: At the beginning of your turn, draw two cards. If your hand was completely empty before the draw,
+
+    draw five instead.
+
+  • Play: Make zero to three plays. Each individual card placed in your bank, property area, or center discard
+
+     pile is one play. Playing a Rent and Double the Rent uses two plays; playing two Pass Go cards uses two
+
+     plays.
+
+  • Finish: If you hold more than seven cards, discard down to seven. Keeping fewer is fine. If the draw pile
+
+    empties, shuffle the discard pile into a fresh draw pile.
+
+  • Win: As soon as you have three complete property sets on the table, you win. A set needs the number of
+
+    cards printed on its property cards, including correctly assigned wildcards.
+
+ The three table areas
+
+
+   Area            What belongs there                       Effect
+
+
+   Bank             Money cards or action cards played as        Only printed monetary value matters; a
+                   money                                 banked action loses its action ability.
+
+
+   Properties            Property cards and property wildcards in      Used for rent and the three-set win
+                            visible sets                                     condition.
+
+
+   Center discard       Action cards played for their printed effect;    Played actions resolve, then remain
+                       excess hand cards                            discarded.
+
+
+    Example turn
+
+     Draw two. Bank a $2M Money card (play 1), place a red property (play 2), and use Pass Go to draw
+
+     two (play 3). If you now hold eight cards, discard one before ending the turn.
+
+
+
+
+
+MONOPOLY DEAL • Detailed rules guide                                                                         1
+
+=== PDF PAGE 2 ===
+ 2. General rules
+
+  • Playing a card to the table is normally final: a tabled card does not go back into your hand. A banked
+
+     action cannot later be reclaimed to use its printed effect.
+
+  • Property cards cannot go into the bank. Actions, Rent, House, and Hotel cards may be banked for the
+
+    monetary value printed in their corners; doing so uses one play.
+
+  • During your own turn, you may reorganize your property wildcards and property sets. Keep cards in legal
+
+     sets. After your turn, leave your display fixed except when an action gives you a new card to place.
+
+  • The site advises leaving opponents’ cards untouched; keep tabled sets and bank values clear and visible
+
+     to avoid disputes.
+
+  • The site suggests two combined decks or changed victory conditions for six or more people. Those are
+
+     optional house rules; the standard product is for two to five.
+
+
+ 3. Payment rules
+
+  • When a card makes you owe money, the paying player chooses what to give. Use cards already in your
+
+    own bank, property area, or both. Cards in your hand are protected and cannot be used to pay.
+
+  • A banked Money or Action card transfers into the recipient’s bank. A property card transfers to the
+
+     recipient’s property area. The recipient never puts payment cards into their hand.
+
+  • Pay with the printed values of the cards you choose. There is no change: a $5M card used for a $3M debt
+
+    pays $5M. If all your tabled cards are worth less than the debt, give what you have; the unpaid
+
+    remainder is lost. If you have no eligible tabled value, pay nothing.
+
+  • You may pay with a property from a completed set and thereby break that set. Houses and hotels may be
+
+    chosen as payment too. The multicolor Property Wild has no money value, so it cannot settle a money
+
+     debt.
+
+    Payment example
+
+     You owe $4M and have a $2M bank card, a $3M banked Action card, and a property worth $1M.
+
+     You can give $2M + the $3M card (overpay by $1M), or the $3M card + property ($4M exactly).
+
+     You decide, not the person collecting.
+
+
+
+ 4. Property rules
+
+  • Build sets in your property area. Brown, dark blue, and utilities need two cards; railroad needs four; the
+
+     other standard color groups need three. Use the number printed on your edition’s property cards if it
+
+      differs.
+
+  • A two-color wildcard represents one of its two printed colors at a time. A multicolor Property Wild may be
+
+    placed alone, but it needs another property card alongside it to support a Rent charge. The multicolor
+
+     wild has no cash value.
+
+  • You may move wildcards between eligible sets during your turn. Extras beyond a completed set start a
+
+    separate set; they do not enlarge the completed set beyond its stated size.
+
+  • An incomplete property can be taken with Sly Deal or swapped with Forced Deal. A complete set is
+
+     protected from those single-property actions, but Deal Breaker can take the whole set, including any
+
+
+
+
+MONOPOLY DEAL • Detailed rules guide                                                                         2
+
+=== PDF PAGE 3 ===
+    attached House and Hotel.
+
+  • The site says three completed sets may include two sets of the same color, built with wildcards. Make
+
+    each set distinct and individually complete.
+
+
+ 5. Action rules
+
+
+   Card                         Effect when played as an action
+
+
+   Pass Go                   Draw two cards. You may play more than one if you have plays left.
+
+
+   Sly Deal                    Take one property from another player’s incomplete set; not a complete set.
+
+
+   Forced Deal               Swap one of your properties with one property from another player’s incomplete
+                                       set. The values need not match.
+
+
+   Debt Collector               Choose one player to pay you $5M.
+
+
+     It's My Birthday               Every other player pays you $2M.
+
+
+   Deal Breaker                Take one entire completed property set from a player, with its attached
+                                     buildings.
+
+
+    Just Say No                   Cancel an Action card directed at you; see section 6.
+
+
+   Rent / Double the Rent        Charge rent from one eligible group / double a rent charge; see section 8.
+
+
+   House / Hotel               Add a rent bonus to an eligible completed set; see section 9.
+
+
+ When used for their effect, Action cards go to the center discard pile. When banked, they are money and cannot be activated.
+  Actions that consume a normal turn play count toward the three-card limit.
+
+
+ 6. Just Say No rules
+
+  • Play Just Say No from your hand in response to an Action card affecting you. Discard it to cancel that
+
+     action against you. It can be used on another player’s turn and does not use one of your three normal
+
+     plays.
+
+  • A Just Say No may itself be countered by another Just Say No. Continue until nobody responds: each
+
+     successive counter flips whether the original action succeeds against the affected player.
+
+  • Against a Double the Rent card, the site says the counter cancels the doubling while the original rent still
+
+     applies. For a multi-target action such as It’s My Birthday, the site describes the usual interpretation as
+
+     canceling only the defending player’s payment, while acknowledging table variation.
+
+    Counter example
+
+      Alex uses Deal Breaker on Bea’s completed set. Bea plays Just Say No; the theft is blocked. Alex
+
+      plays another Just Say No; the theft succeeds unless Bea or another applicable player responds
+
+      again under your group’s agreed interpretation.
+
+
+
+
+
+MONOPOLY DEAL • Detailed rules guide                                                                         3
+
+=== PDF PAGE 4 ===
+ 7. Deal Breaker rules
+
+  • Deal Breaker targets a complete property set, not a loose property or incomplete set. Move the entire
+
+    chosen set to your property area, including any House or Hotel attached to it.
+
+  • The source site treats a mistakenly played Deal Breaker against a player with no full set as spent: it goes
+
+     to the discard pile and still counts as one of the player’s three plays. For an online game, define
+
+     invalid-target handling explicitly before implementation.
+
+
+ 8. Rent rules
+
+  • To charge rent, you must have a matching property group displayed. Play the Rent card to the discard
+
+      pile, choose one eligible color, and charge according to the rent ladder printed on those property cards.
+
+    One Rent card does not combine two color groups.
+
+  • A two-color Rent card lets you choose one of its printed colors and charges all other players. A multicolor
+
+    Wild Rent card chooses one displayed color and charges one chosen player. A multicolor Property Wild
+
+    alone cannot generate rent.
+
+  • Double the Rent accompanies a Rent card, consumes its own play, and doubles the applicable charge.
+
+    Two Double the Rent cards can be played with one Rent card in a single turn (three card plays total),
+
+    producing four times the original rent if both apply.
+
+    Rent example
+
+     You have two orange properties. Read the two-property orange rent on the card. A pink/orange
+
+      Rent card charges that amount to each opponent. A Wild Rent card would charge the same
+
+     amount to only one chosen opponent. A Double the Rent card doubles the selected charge.
+
+
+
+ 9. House and Hotel rules
+
+  • A House may be attached only to a complete eligible property set. A Hotel may be attached only to a
+
+    complete set that already has a House. Neither can be put on railroads or utilities. Playing each card uses
+
+    one of your three plays.
+
+  • The source site describes an attached House as increasing rent by $3M and a Hotel as increasing it by
+
+    $4M, but explicitly says the combined bonus is disputed: its authors favor $7M, while they report an
+
+     unverified Hasbro email supporting a $4M combined bonus. Agree on a rule before play and check the
+
+     booklet supplied with your edition.
+
+  • Deal Breaker transfers attached buildings with the full set. If a set breaks when property is used for
+
+    payment, the site says its orphaned House or Hotel stays on the table until it can be attached to a new
+
+    completed set or used as payment. It cannot be newly played without the required complete set.
+
+
+ 10. Cards and contents
+
+ The site describes a 110-card package, including four Quick Start reference cards. Counts below follow its
+
+ general-rules inventory; its separate cards page contains inconsistent individual Action counts, so check the
+
+ physical deck before encoding exact quantities.
+
+
+
+
+
+MONOPOLY DEAL • Detailed rules guide                                                                         4
+
+=== PDF PAGE 5 ===
+   Group                   Count   What it does
+
+
+   Quick Start references       4         Rules aids; remove before shuffling.
+
+
+   Money                    20       Bank for payment: six $1M, five $2M, three $3M, three $4M, two $5M,
+                                      one $10M.
+
+
+    Action, including buildings    34       2 Deal Breaker, 3 Just Say No, 10 Pass Go, 3 Forced Deal, 3 Sly Deal,
+                                     3 Debt Collector, 3 Birthday, 2 Double the Rent, 3 House, 2 Hotel.
+
+
+   Rent                     13       Ten dual-color (two each of five pairings) and three multicolor Wild
+                                            Rent.
+
+
+   Ordinary property           28       2 each brown, dark blue, utility; 3 each green, yellow, red, orange,
+                                                pink, light blue; 4 railroads.
+
+
+   Property wildcards          11        Nine two-color wildcards across seven pairings, plus two multicolor
+                                              wildcards.
+
+
+  Total: 4 + 20 + 34 + 13 + 28 + 11 = 110 cards. Some printings count or classify cards differently. The face text of the physical
+ deck is the safest implementation source.
+
+
+ 11. Instruction book
+
+  • The linked page presents images of the deck’s included instruction book. It names these sections: How to
+
+    Win, What the Game’s About, Set Up, On Your Turn, What the Game Looks Like, The Winner, and The
+
+    Cards in More Detail.
+
+  • Use the actual booklet supplied with your edition to settle differences. This guide explains the website’s
+
+     topic pages in original wording; it is not a facsimile of the copyrighted booklet.
+
+
+ 12. About Monopoly Deal
+
+  • Monopoly Deal is a quick property-collection card game for two to five players. Players build sets, bank
+
+     cash, charge rent, swap or steal properties, and defend against actions. The standard win condition is
+
+     three completed property sets.
+
+  • For a software version, keep turn plays, table zones, card ownership, set completion, payment choices,
+
+    and action response windows explicit. Mark any optional house rules separately from the base rules.
+
+
+ Source notes and rule choices
+
+ Primary requested source: monopolydealrules.com/instructionbook. Category pages consulted: /general, /payment, /property,
+  /action, /justsayno, /dealbreaker, /rent, /house, /play, and /cards (all under the same index.php?page= path). Hasbro product
+ page: instructions.hasbro.com/en-gb/instruction/monopoly-deal-card-game. Accessed 28 September 2026 (UTC).
+
+ The fan site mixes booklet summaries, FAQ interpretations, and proposed house rules. Its cards page conflicts with its general
+  inventory; its House/Hotel page records a disputed combined rent bonus; Hasbro’s product summary describes three sets in
+  different colors, while the fan site allows duplicate-color sets. For a production rules engine, select the physical edition and
+ record these decisions in a versioned rules specification.
+
+
+
+
+
+MONOPOLY DEAL • Detailed rules guide                                                                         5

@@ -1,0 +1,32 @@
+scope,group,name,requested,npm_lock_version,npm_lock_license
+.,devDependencies,concurrently,^9.1.2,9.2.1,MIT
+client,dependencies,@web-kits/audio,^0.1.0,0.1.0,MIT
+client,dependencies,@yudiel/react-qr-scanner,^2.5.1,not recorded,not recorded
+client,dependencies,framer-motion,^12.34.3,12.34.3,MIT
+client,dependencies,lucide-react,^0.575.0,0.575.0,ISC
+client,dependencies,mobile-drag-drop,^3.0.0-rc.0,3.0.0-rc.0,MIT
+client,dependencies,qrcode,^1.5.4,not recorded,not recorded
+client,dependencies,react,^19.2.0,19.2.4,MIT
+client,dependencies,react-dom,^19.2.0,19.2.4,MIT
+client,dependencies,react-router-dom,^7.15.0,7.15.0,MIT
+client,dependencies,web-haptics,^0.0.6,0.0.6,MIT
+client,dependencies,zustand,^5.0.11,5.0.11,MIT
+client,devDependencies,@eslint/js,^9.39.1,9.39.3,MIT
+client,devDependencies,@tailwindcss/vite,^4.2.1,4.2.1,MIT
+client,devDependencies,@types/node,^24.10.1,24.10.13,MIT
+client,devDependencies,@types/qrcode,^1.5.6,not recorded,not recorded
+client,devDependencies,@types/react,^19.2.7,19.2.14,MIT
+client,devDependencies,@types/react-dom,^19.2.3,19.2.3,MIT
+client,devDependencies,@vitejs/plugin-react,^5.1.1,5.1.4,MIT
+client,devDependencies,eslint,^9.39.1,9.39.3,MIT
+client,devDependencies,eslint-plugin-react-hooks,^7.0.1,7.0.1,MIT
+client,devDependencies,eslint-plugin-react-refresh,^0.4.24,0.4.26,MIT
+client,devDependencies,globals,^16.5.0,16.5.0,MIT
+client,devDependencies,tailwindcss,^4.2.1,4.2.1,MIT
+client,devDependencies,typescript,~5.9.3,5.9.3,Apache-2.0
+client,devDependencies,typescript-eslint,^8.48.0,8.56.1,MIT
+client,devDependencies,vite,^7.3.1,7.3.1,MIT
+client,devDependencies,vite-plugin-pwa,^1.3.0,1.3.0,MIT
+server,dependencies,hono,^4.12.2,not recorded,not recorded
+server,devDependencies,@types/bun,latest,not recorded,not recorded
+server,peerDependencies,typescript,^5,not recorded,not recorded
