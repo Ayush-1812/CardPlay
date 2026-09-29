@@ -160,6 +160,9 @@ small {
 .sidebar-bottom small {
   font-size: 10px;
 }
+.mobile-room-nav {
+  display: none;
+}
 .small-club {
   font-size: 40px;
   color: #68816f;
@@ -669,6 +672,28 @@ footer > span:first-child {
   }
 }
 @media (max-width: 760px) {
+  .mobile-room-nav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 0 0 16px;
+    margin-bottom: 16px;
+  }
+  .mobile-room-nav button {
+    flex: none;
+    background: #23322b;
+    color: var(--muted);
+    padding: 9px 14px;
+    border-radius: 6px;
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mobile-room-nav button.active {
+    background: #354738;
+    color: var(--green);
+  }
   .friend-row {
     flex-wrap: wrap;
   }

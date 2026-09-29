@@ -76,8 +76,8 @@ func New(db *pgxpool.Pool, c config.Config) *App {
 			r.Use(httpx.Require)
 			r.Get("/me", auth.Me)
 			r.Patch("/me", auth.UpdateMe)
-			r.Delete("/me", auth.DeleteMe)
-			r.Put("/me/password", auth.ChangeMyPassword)
+			r.With(newLimiter(5, time.Minute)).Delete("/me", auth.DeleteMe)
+			r.With(newLimiter(5, time.Minute)).Put("/me/password", auth.ChangeMyPassword)
 			r.Get("/sessions", auth.Sessions)
 			r.Delete("/sessions/{sessionID}", auth.RevokeSession)
 			r.Post("/auth/logout", auth.Logout)
@@ -173,7 +173,9 @@ func newAuthLimiter() func(http.Handler) http.Handler {
 	global := newLimiter(600, time.Minute)
 	return func(next http.Handler) http.Handler {
 		return global(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			body, err := io.ReadAll(io.LimitReader(r.Body, (16<<10)+1))
+			originalBody := r.Body
+			body, err := io.ReadAll(io.LimitReader(originalBody, (16<<10)+1))
+			_ = originalBody.Close()
 			if err != nil || len(body) > 16<<10 {
 				httpx.Error(w, r, 400, "INVALID_REQUEST", "Request body is too large")
 				return

@@ -318,6 +318,32 @@ export function Dashboard() {
               {notice}
             </div>
           )}
+          {user?.email_verified && (
+            <nav className="mobile-room-nav" aria-label="Room navigation">
+              <button
+                className={!selected ? "active" : ""}
+                onClick={() => {
+                  setSelected(null);
+                  setView(null);
+                }}
+              >
+                Lobby
+              </button>
+              {roomList.map((room) => (
+                <button
+                  key={room.id}
+                  className={selected === room.id ? "active" : ""}
+                  onClick={() => {
+                    setSelected(room.id);
+                    setView(null);
+                    setLink("");
+                  }}
+                >
+                  {room.name}
+                </button>
+              ))}
+            </nav>
+          )}
           {loading ? (
             <p role="status">Finding your seat…</p>
           ) : !user ? (

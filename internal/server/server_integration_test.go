@@ -248,6 +248,13 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	if status, _ := do("POST", "/api/v1/rooms/join", bobToken, map[string]any{"invitation_id": personal["id"]}); status != 200 {
 		t.Fatalf("friend join=%d", status)
 	}
+	status, bobLink := do("POST", "/api/v1/rooms/"+hostRoom+"/invitations", bobToken, map[string]any{})
+	if status != 201 {
+		t.Fatalf("member link invite=%d", status)
+	}
+	if status, _ := do("DELETE", "/api/v1/invitations/"+bobLink["id"].(string), aliceToken, nil); status != 204 {
+		t.Fatalf("host revokes member invite=%d", status)
+	}
 	if status, _ := do("PATCH", "/api/v1/rooms/"+hostRoom, bobToken, map[string]any{"name": "Hijacked", "capacity": 2}); status != 404 {
 		t.Fatalf("nonhost room edit=%d", status)
 	}
@@ -315,7 +322,17 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	if status, _ := do("POST", "/api/v1/rooms/join", bobToken, map[string]any{"token": linkInvite["token"]}); status != 200 {
 		t.Fatalf("absent-host join=%d", status)
 	}
-	if _, err = pool.Exec(ctx, "UPDATE room_members SET last_seen_at=now()-interval '70 seconds' WHERE room_id=$1 AND user_id=$2", absentRoom, alice); err != nil {
+	if _, err = pool.Exec(ctx, "UPDATE room_members SET last_seen_at=now()-interval '70 seconds' WHERE room_id=$1", absentRoom); err != nil {
+		t.Fatal(err)
+	}
+	if err = app.Hub.Rooms.TransferAbsentHosts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	status, transferredView = do("GET", "/api/v1/rooms/"+absentRoom, bobToken, nil)
+	if status != 200 || transferredView["room"].(map[string]any)["host_id"] != alice {
+		t.Fatalf("all-offline room transferred=%d %v", status, transferredView)
+	}
+	if _, err = pool.Exec(ctx, "UPDATE room_members SET last_seen_at=now() WHERE room_id=$1 AND user_id=$2", absentRoom, bob); err != nil {
 		t.Fatal(err)
 	}
 	if err = app.Hub.Rooms.TransferAbsentHosts(ctx); err != nil {
