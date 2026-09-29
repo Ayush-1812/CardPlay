@@ -2,7 +2,9 @@ package realtime
 
 import (
 	"cardplay/internal/chat"
+	"cardplay/internal/game"
 	"cardplay/internal/httpx"
+	"cardplay/internal/matches"
 	"cardplay/internal/rooms"
 	"cardplay/internal/store"
 	"context"
@@ -24,6 +26,8 @@ import (
 const (
 	closeSessionEnded    websocket.StatusCode = 4001
 	closeRoomUnavailable websocket.StatusCode = 4004
+	// closeReplaced: another tab or device took control of this seat (PRD P08).
+	closeReplaced websocket.StatusCode = 4009
 )
 
 type Envelope struct {
@@ -31,6 +35,7 @@ type Envelope struct {
 	Type    string          `json:"type"`
 	ID      string          `json:"id,omitempty"`
 	RoomID  string          `json:"room_id,omitempty"`
+	MatchID string          `json:"match_id,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 type outbound struct {
@@ -38,24 +43,63 @@ type outbound struct {
 	Type    string `json:"type"`
 	ID      string `json:"id,omitempty"`
 	RoomID  string `json:"room_id,omitempty"`
+	MatchID string `json:"match_id,omitempty"`
 	Payload any    `json:"payload,omitempty"`
 }
+
+// commandMessage is the payload of a game.command frame.
+type commandMessage struct {
+	CommandID        string          `json:"command_id"`
+	ExpectedRevision int64           `json:"expected_revision"`
+	Kind             string          `json:"kind"`
+	Payload          json.RawMessage `json:"payload"`
+}
+
 type client struct {
 	conn                 *websocket.Conn
 	actor, session, room string
-	send                 chan outbound
+	// match, matchRoom and gen identify the seat this socket controls; guarded by Hub.mu.
+	match, matchRoom string
+	gen              int64
+	send             chan outbound
+	// dirty coalesces match notifications; the push loop sends the latest projection.
+	dirty chan struct{}
 }
 type Hub struct {
 	DB      *pgxpool.Pool
 	Rooms   *rooms.Module
 	Chat    *chat.Module
+	Matches *matches.Module
 	Origin  string
 	mu      sync.Mutex
 	clients map[*client]bool
 }
 
-func New(db *pgxpool.Pool, rm *rooms.Module, ch *chat.Module, origin string) *Hub {
-	return &Hub{DB: db, Rooms: rm, Chat: ch, Origin: origin, clients: map[*client]bool{}}
+func New(db *pgxpool.Pool, rm *rooms.Module, ch *chat.Module, mt *matches.Module, origin string) *Hub {
+	return &Hub{DB: db, Rooms: rm, Chat: ch, Matches: mt, Origin: origin, clients: map[*client]bool{}}
+}
+
+func (c *client) markDirty() {
+	select {
+	case c.dirty <- struct{}{}:
+	default:
+	}
+}
+
+// matchSeat returns the seat this socket controls, if any.
+func (h *Hub) matchSeat(c *client) (string, int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return c.match, c.gen
+}
+
+func sendMatchError(h *Hub, c *client, id string, err error) {
+	var me *matches.Error
+	if errors.As(err, &me) {
+		h.queue(c, outbound{Version: 1, Type: "error", ID: id, Payload: me})
+		return
+	}
+	h.queue(c, outbound{Version: 1, Type: "error", ID: id, Payload: map[string]string{"code": "INTERNAL", "message": "Try again"}})
 }
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// No credential in URL, and no wildcard origins. Recheck cookies through auth middleware.
@@ -82,13 +126,46 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = conn.CloseNow() }()
 	conn.SetReadLimit(16 << 10)
 	a := httpx.Actor(r)
-	c := &client{conn: conn, actor: a.ID, session: a.SessionHash, send: make(chan outbound, 32)}
+	c := &client{conn: conn, actor: a.ID, session: a.SessionHash, send: make(chan outbound, 32), dirty: make(chan struct{}, 1)}
 	h.mu.Lock()
 	h.clients[c] = true
 	h.mu.Unlock()
 	defer func() { h.mu.Lock(); delete(h.clients, c); h.mu.Unlock() }()
+	// When the socket ends its seat becomes absent and the match pauses
+	// (PRD P09). A replaced controller's generation no longer matches, so a
+	// stale socket closing never pauses the match its successor is playing.
+	defer func() {
+		if match, gen := h.matchSeat(c); match != "" {
+			dc, done := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = h.Matches.Disconnect(dc, match, c.actor, gen)
+			done()
+		}
+	}()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	// Push loop: after every notification, send this player only their own
+	// projection, read from the durable state.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-c.dirty:
+			}
+			match, gen := h.matchSeat(c)
+			if match == "" {
+				continue
+			}
+			st, err := h.Matches.StateFor(ctx, match, c.actor, gen)
+			if errors.Is(err, matches.ErrReplaced) {
+				_ = conn.Close(closeReplaced, "Opened in another tab")
+				return
+			}
+			if err == nil {
+				h.queue(c, outbound{Version: 1, Type: "match.state", MatchID: match, Payload: st})
+			}
+		}
+	}()
 	go func() {
 		defer cancel()
 		tick := time.NewTicker(20 * time.Second)
@@ -110,6 +187,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if _, err := store.New(h.DB).SessionUser(ctx, c.session); errors.Is(err, pgx.ErrNoRows) {
 					_ = conn.Close(closeSessionEnded, "Session expired")
 					return
+				}
+				if match, gen := h.matchSeat(c); match != "" {
+					if err := h.Matches.Heartbeat(ctx, match, c.actor, gen); errors.Is(err, matches.ErrReplaced) {
+						_ = conn.Close(closeReplaced, "Opened in another tab")
+						return
+					}
 				}
 				h.mu.Lock()
 				room := c.room
@@ -168,18 +251,22 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				sendError("INVALID_REQUEST", "Invalid room id")
 				continue
 			}
-			view, err := h.Rooms.View(ctx, in.RoomID, c.actor)
-			if err != nil {
-				sendError("NOT_FOUND", "Room unavailable")
-				continue
-			}
-			if err = h.Rooms.Seen(ctx, in.RoomID, c.actor); err != nil {
-				sendError("NOT_FOUND", "Room unavailable")
-				continue
-			}
+			// Register before reading so no committed change can fall between
+			// the snapshot and the subscription.
 			h.mu.Lock()
 			c.room = in.RoomID
 			h.mu.Unlock()
+			view, err := h.Rooms.View(ctx, in.RoomID, c.actor)
+			if err == nil {
+				err = h.Rooms.Seen(ctx, in.RoomID, c.actor)
+			}
+			if err != nil {
+				h.mu.Lock()
+				c.room = ""
+				h.mu.Unlock()
+				sendError("NOT_FOUND", "Room unavailable")
+				continue
+			}
 			h.queue(c, outbound{Version: 1, Type: "room.snapshot", ID: in.ID, RoomID: in.RoomID, Payload: view})
 		case "chat.send":
 			if !httpx.UUID(in.RoomID) {
@@ -202,8 +289,67 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			h.queue(c, outbound{Version: 1, Type: "ack", ID: in.ID, RoomID: in.RoomID, Payload: map[string]any{"message_id": msg.ID, "client_id": msg.ClientID}})
+		case "match.subscribe":
+			if !httpx.UUID(in.MatchID) {
+				sendError("INVALID_REQUEST", "Invalid match id")
+				continue
+			}
+			gen, st, err := h.Matches.Subscribe(ctx, in.MatchID, c.actor)
+			if err != nil {
+				sendMatchError(h, c, in.ID, err)
+				continue
+			}
+			var replaced []*client
+			h.mu.Lock()
+			prevMatch, prevGen := c.match, c.gen
+			c.match, c.matchRoom, c.gen = in.MatchID, st.RoomID, gen
+			for other := range h.clients {
+				if other != c && other.actor == c.actor && other.match == in.MatchID {
+					replaced = append(replaced, other)
+				}
+			}
+			h.mu.Unlock()
+			for _, other := range replaced {
+				go func() { _ = other.conn.Close(closeReplaced, "Opened in another tab") }()
+			}
+			if prevMatch != "" && prevMatch != in.MatchID {
+				_ = h.Matches.Disconnect(ctx, prevMatch, c.actor, prevGen)
+			}
+			h.queue(c, outbound{Version: 1, Type: "match.state", ID: in.ID, MatchID: in.MatchID, Payload: st})
+			// A change committed after the state above was read but before this
+			// socket was registered would otherwise be missed: refresh once more.
+			c.markDirty()
+		case "match.resync":
+			if match, _ := h.matchSeat(c); match == "" {
+				sendError("INVALID_REQUEST", "Subscribe to a match first")
+				continue
+			}
+			c.markDirty()
 		case "game.command":
-			sendError("GAME_NOT_READY", "Game commands are unavailable in the foundation release")
+			match, gen := h.matchSeat(c)
+			if match == "" || in.MatchID != match {
+				sendError("INVALID_REQUEST", "Subscribe to this match before sending commands")
+				continue
+			}
+			var cmd commandMessage
+			if json.Unmarshal(in.Payload, &cmd) != nil {
+				sendError("INVALID_REQUEST", "Invalid command payload")
+				continue
+			}
+			ack, err := h.Matches.Execute(ctx, match, c.actor, gen, game.Command{ID: cmd.CommandID, ExpectedRevision: cmd.ExpectedRevision, Kind: cmd.Kind, Payload: cmd.Payload})
+			if errors.Is(err, matches.ErrReplaced) {
+				_ = conn.Close(closeReplaced, "Opened in another tab")
+				return
+			}
+			if err != nil {
+				sendMatchError(h, c, in.ID, err)
+				var me *matches.Error
+				if errors.As(err, &me) && me.Code == "STALE_REVISION" {
+					c.markDirty()
+				}
+				continue
+			}
+			h.queue(c, outbound{Version: 1, Type: "ack", ID: in.ID, MatchID: match, Payload: ack})
 		default:
 			sendError("UNKNOWN_MESSAGE", "Unknown message type")
 		}
@@ -220,6 +366,12 @@ func (h *Hub) broadcast(room, kind string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for c := range h.clients {
+		if kind == "match.updated" {
+			if c.matchRoom == room {
+				c.markDirty()
+			}
+			continue
+		}
 		if c.room == room {
 			h.queue(c, outbound{Version: 1, Type: kind, RoomID: room})
 		}
@@ -227,7 +379,7 @@ func (h *Hub) broadcast(room, kind string) {
 }
 
 // broadcastSubscribed hints every subscribed client to refetch, used when
-// notifications may have been missed while the listener was disconnected.
+// notifications may have been missed while the listener was not listening.
 func (h *Hub) broadcastSubscribed() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -235,6 +387,9 @@ func (h *Hub) broadcastSubscribed() {
 		if c.room != "" {
 			h.queue(c, outbound{Version: 1, Type: "room.updated", RoomID: c.room})
 			h.queue(c, outbound{Version: 1, Type: "chat.updated", RoomID: c.room})
+		}
+		if c.match != "" {
+			c.markDirty()
 		}
 	}
 }
@@ -264,16 +419,20 @@ func (h *Hub) Run(ctx context.Context) {
 			_ = q.PurgeOutbox(ctx)
 			_ = q.DeleteExpiredSessions(ctx)
 			_ = q.DeleteExpiredLoginDevices(ctx)
+			_ = h.Matches.Retention(ctx)
 		case <-presence.C:
 			_ = h.Rooms.TransferAbsentHosts(ctx)
+			if err := h.Matches.Sweep(ctx); err != nil && ctx.Err() == nil {
+				slog.Warn("match sweep failed", "error_type", fmt.Sprintf("%T", err))
+			}
 		}
 	}
 }
 
 func (h *Hub) listen(ctx context.Context) {
 	delay := time.Second
-	for reconnect := false; ; reconnect = true {
-		listened, err := h.listenOnce(ctx, reconnect)
+	for {
+		listened, err := h.listenOnce(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -290,7 +449,7 @@ func (h *Hub) listen(ctx context.Context) {
 	}
 }
 
-func (h *Hub) listenOnce(ctx context.Context, reconnect bool) (bool, error) {
+func (h *Hub) listenOnce(ctx context.Context) (bool, error) {
 	pooled, err := h.DB.Acquire(ctx)
 	if err != nil {
 		return false, err
@@ -301,9 +460,9 @@ func (h *Hub) listenOnce(ctx context.Context, reconnect bool) (bool, error) {
 	if _, err = conn.Exec(ctx, "LISTEN cardplay_outbox"); err != nil {
 		return false, err
 	}
-	if reconnect {
-		h.broadcastSubscribed()
-	}
+	// Clients that subscribed before LISTEN took effect, at startup or during
+	// a listener reconnect, may have missed notifications: tell them to refetch.
+	h.broadcastSubscribed()
 	for {
 		n, err := conn.WaitForNotification(ctx)
 		if err != nil {

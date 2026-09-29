@@ -21,6 +21,18 @@ type Module struct{ DB *pgxpool.Pool }
 type View struct {
 	Room    store.Room         `json:"room"`
 	Members []store.MembersRow `json:"members"`
+	// Match is the room's latest match: live, or the last result (PRD P10).
+	Match *MatchSummary `json:"match,omitempty"`
+}
+
+// MatchSummary is public match metadata; the game state is fetched separately.
+type MatchSummary struct {
+	ID         string     `json:"id"`
+	Status     string     `json:"status"`
+	WinnerID   *string    `json:"winner_id,omitempty"`
+	EndReason  string     `json:"end_reason,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 func (m *Module) View(ctx context.Context, id, actor string) (View, error) {
@@ -45,7 +57,14 @@ func (m *Module) View(ctx context.Context, id, actor string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	return View{room, members}, tx.Commit(ctx)
+	view := View{Room: room, Members: members}
+	mt, err := q.LatestRoomMatch(ctx, id)
+	if err == nil {
+		view.Match = &MatchSummary{ID: mt.ID, Status: mt.Status, WinnerID: mt.WinnerID, EndReason: mt.EndReason.String, CreatedAt: mt.CreatedAt, FinishedAt: mt.FinishedAt}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return View{}, err
+	}
+	return view, tx.Commit(ctx)
 }
 func changed(ctx context.Context, q *store.Queries, id string) error {
 	if err := q.BumpRoom(ctx, id); err != nil {

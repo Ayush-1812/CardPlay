@@ -15,11 +15,13 @@ import (
 // Module implements game.Game for rules version us-01723-v1.
 type Module struct{}
 
-// Descriptor stays unplayable until matches are wired to the platform
-// (roadmap M3: durable commands, per-seat projections). The engine is complete.
+// Descriptor reports the pinned edition and rules version.
 func (Module) Descriptor() game.Descriptor {
-	return game.Descriptor{ID: "monopoly-deal", Name: "Monopoly Deal", RulesVersion: "us-01723-v1", MinPlayers: 2, MaxPlayers: 5, Playable: false}
+	return game.Descriptor{ID: "monopoly-deal", Name: "Monopoly Deal", RulesVersion: "us-01723-v1", MinPlayers: 2, MaxPlayers: 5, Playable: true}
 }
+
+// Cards returns the public card manifest; it holds no hidden state.
+func (Module) Cards() any { return Manifest() }
 
 // New deals a game. Setup.Random must be crypto/rand in production.
 func (Module) New(_ context.Context, setup game.Setup) (game.State, error) {
@@ -136,4 +138,8 @@ func decode(st game.State) (*State, error) {
 	return &s, nil
 }
 
-var _ game.Game = Module{}
+var (
+	_ game.Game        = Module{}
+	_ game.CardCatalog = Module{}
+	_ game.Rejection   = (*RuleError)(nil)
+)

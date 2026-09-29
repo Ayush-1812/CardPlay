@@ -126,7 +126,7 @@ func TestModuleAdapter(t *testing.T) {
 	if _, err := m.View(tr.State, "stranger"); err == nil {
 		t.Fatal("stranger got a view")
 	}
-	if m.Descriptor().Playable {
-		t.Fatal("stay unplayable until matches are wired (M3)")
+	if !m.Descriptor().Playable {
+		t.Fatal("the engine is wired to matches and must be playable")
 	}
 }

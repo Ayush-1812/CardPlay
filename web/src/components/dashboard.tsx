@@ -14,11 +14,28 @@ import {
   RoomView,
   User,
 } from "../lib/api";
+import { CardInfo, Cards, MatchState } from "../lib/game";
+import { GameTable } from "./game-table";
 
 const SESSION_ENDED = "Your session ended. Sign in again.";
 // Server WebSocket close codes; any other close is transient and retried.
 const CLOSE_SESSION_ENDED = 4001;
 const CLOSE_ROOM_UNAVAILABLE = 4004;
+// Another tab or device took control of this seat; do not reconnect on our own
+// or the two tabs would keep taking the seat from each other.
+const CLOSE_REPLACED = 4009;
+
+type Reply = { type: string; payload?: { code?: string; message?: string } };
+
+function liveMatch(status?: string) {
+  return status === "playing" || status === "paused";
+}
+
+// Engine messages look like "NO_PLAYS_LEFT: this needs 1 play(s)"; show the prose.
+function ruleMessage(message = "") {
+  const text = message.replace(/^[A-Z_]+: /, "");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 function sessionEnded(e: unknown) {
   return (
@@ -51,6 +68,21 @@ export function Dashboard() {
     { id: string; created_at: string; expires_at: string }[]
   >([]);
   const [inviteToken, setInviteToken] = useState("");
+  const [match, setMatch] = useState<MatchState | null>(null);
+  const [cards, setCards] = useState<Cards>({});
+  const [replaced, setReplaced] = useState(false);
+  const [socketNonce, setSocketNonce] = useState(0);
+  const [gameBusy, setGameBusy] = useState(false);
+  const [dismissedMatch, setDismissedMatch] = useState<string | null>(null);
+  const [mutes, setMutes] = useState<PublicUser[]>([]);
+  const [chatVisible, setChatVisible] = useState(true);
+  const [chatBoundary, setChatBoundary] = useState(0);
+  const sendRef = useRef<
+    ((frame: Record<string, unknown>) => Promise<Reply>) | null
+  >(null);
+  const matchRef = useRef<MatchState | null>(null);
+  const gameBusyRef = useRef(false);
+  const chatPanel = useRef<HTMLElement>(null);
   const chatDraft = useRef<{ body: string; id: string } | null>(null);
   const busyRef = useRef(false);
   const selectedRef = useRef<string | null>(null);
@@ -62,6 +94,7 @@ export function Dashboard() {
 
   // Clears everything tied to the signed-in account.
   const endSession = useCallback((message: string) => {
+    sessionStorage.removeItem("cardplay_room");
     setUser(null);
     setRooms([]);
     setFriends([]);
@@ -76,6 +109,9 @@ export function Dashboard() {
     setSessions([]);
     setLink("");
     setConnection("Offline");
+    setMatch(null);
+    setMutes([]);
+    setReplaced(false);
     setError("");
     setNotice(message);
   }, []);
@@ -111,16 +147,18 @@ export function Dashboard() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const [r, f, i, b] = await Promise.all([
+    const [r, f, i, b, m] = await Promise.all([
       api<{ items: Room[] }>("/rooms"),
       api<{ items: Friend[] }>("/friendships"),
       api<{ items: Invitation[] }>("/invitations"),
       api<{ items: PublicUser[] }>("/blocks"),
+      api<{ items: PublicUser[] }>("/mutes"),
     ]);
     setRooms(r.items);
     setFriends(f.items);
     setInvitations(i.items);
     setBlocks(b.items);
+    setMutes(m.items);
     setDataLoading(false);
   }, []);
 
@@ -134,8 +172,13 @@ export function Dashboard() {
     }
     const savedToken = token ?? sessionStorage.getItem("cardplay_invite") ?? "";
     // Read once after hydration; URL fragments never reach server access logs.
+    // Reopen this tab's room after a refresh (PRD P08); the server still
+    // authorizes it and an unavailable room falls back to the lobby.
+    const savedRoom = sessionStorage.getItem("cardplay_room");
     queueMicrotask(() => {
-      if (active) setInviteToken(savedToken);
+      if (!active) return;
+      setInviteToken(savedToken);
+      if (savedRoom) setSelected(savedRoom);
     });
     api<User>("/me")
       .then((u) => {
@@ -179,6 +222,37 @@ export function Dashboard() {
   }, [selected]);
 
   useEffect(() => {
+    matchRef.current = match;
+  }, [match]);
+
+  // Public card metadata for the table (no hidden state).
+  useEffect(() => {
+    if (!verified) return;
+    let active = true;
+    api<{ items: CardInfo[] }>("/games/monopoly-deal/cards")
+      .then((r) => {
+        if (active) setCards(Object.fromEntries(r.items.map((c) => [c.id, c])));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [verified]);
+
+  // Unread chat: while the chat panel is off screen, messages after the
+  // point it left view count as new.
+  useEffect(() => {
+    const panel = chatPanel.current;
+    if (!panel || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) setChatBoundary(lastChatID.current);
+      setChatVisible(entry.isIntersecting);
+    });
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [selected, view]);
+
+  useEffect(() => {
     const log = chatLog.current;
     if (log) log.scrollTop = log.scrollHeight;
   }, [chat]);
@@ -189,6 +263,54 @@ export function Dashboard() {
     let socket: WebSocket | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    let subscribed: string | null = null;
+    const replies = new Map<string, (reply: Reply) => void>();
+    const offline: Reply = {
+      type: "error",
+      payload: {
+        code: "OFFLINE",
+        message: "Reconnecting to the table. Try again in a moment.",
+      },
+    };
+    sendRef.current = (frame) =>
+      new Promise((resolve) => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          resolve(offline);
+          return;
+        }
+        const id = crypto.randomUUID();
+        replies.set(id, resolve);
+        socket.send(JSON.stringify({ v: 1, id, ...frame }));
+      });
+    // Follow the room's match: subscribe to a live one (taking control of
+    // our seat) or fetch the final result of an ended one.
+    const syncMatch = (v: RoomView) => {
+      const m = v.match;
+      if (
+        !m ||
+        subscribed === m.id ||
+        !socket ||
+        socket.readyState !== WebSocket.OPEN
+      )
+        return;
+      subscribed = m.id;
+      if (liveMatch(m.status)) {
+        socket.send(
+          JSON.stringify({
+            v: 1,
+            id: crypto.randomUUID(),
+            type: "match.subscribe",
+            match_id: m.id,
+          }),
+        );
+      } else {
+        void api<MatchState>(`/matches/${m.id}`)
+          .then((st) => {
+            if (active) setMatch(st);
+          })
+          .catch(() => undefined);
+      }
+    };
     const loadRoom = async () => {
       const [v, invites] = await Promise.all([
         api<RoomView>(`/rooms/${selected}`),
@@ -197,9 +319,11 @@ export function Dashboard() {
       if (active) {
         setView(v);
         setCreatedInvites(invites.items);
+        syncMatch(v);
       }
     };
     const roomGone = () => {
+      sessionStorage.removeItem("cardplay_room");
       setSelected(null);
       setView(null);
       setChat([]);
@@ -220,6 +344,7 @@ export function Dashboard() {
       );
       socket.onopen = () => {
         attempt = 0;
+        subscribed = null;
         setConnection("Connected");
         socket?.send(
           JSON.stringify({
@@ -236,16 +361,42 @@ export function Dashboard() {
       socket.onmessage = (event) => {
         const message = JSON.parse(event.data) as {
           type: string;
-          payload?: RoomView;
+          id?: string;
+          payload?: unknown;
         };
-        if (message.type === "room.snapshot" && message.payload)
-          setView(message.payload);
+        const reply = message.id ? replies.get(message.id) : undefined;
+        if (reply) {
+          replies.delete(message.id!);
+          reply(message as Reply);
+        }
+        if (message.type === "room.snapshot" && message.payload) {
+          setView(message.payload as RoomView);
+          syncMatch(message.payload as RoomView);
+        }
+        if (message.type === "match.state" && message.payload) {
+          const next = message.payload as MatchState;
+          // Pushes may overtake each other; keep the newest version.
+          setMatch((current) =>
+            !current ||
+            current.match_id !== next.match_id ||
+            next.version >= current.version
+              ? next
+              : current,
+          );
+        }
         if (message.type === "room.updated") void loadRoom().catch(onLoadError);
         if (message.type === "chat.updated")
           void loadChat(selected, false).catch(onLoadError);
       };
       socket.onclose = (event) => {
+        for (const resolve of replies.values()) resolve(offline);
+        replies.clear();
         if (!active) return;
+        if (event.code === CLOSE_REPLACED) {
+          setReplaced(true);
+          setConnection("Open in another tab");
+          return;
+        }
         if (event.code === CLOSE_SESSION_ENDED) {
           endSession(SESSION_ENDED);
           return;
@@ -265,10 +416,11 @@ export function Dashboard() {
     connect();
     return () => {
       active = false;
+      sendRef.current = null;
       if (retry) clearTimeout(retry);
       socket?.close();
     };
-  }, [selected, userID, verified, refresh, loadChat, endSession]);
+  }, [selected, userID, verified, refresh, loadChat, endSession, socketNonce]);
 
   async function run(work: () => Promise<void>) {
     if (busyRef.current) return;
@@ -286,10 +438,48 @@ export function Dashboard() {
       setBusy(false);
     }
   }
+  // command sends one game intent over the socket and waits for the durable
+  // acknowledgement. The server decides the result; the table then updates
+  // from the pushed projection.
+  async function command(kind: string, payload: object): Promise<boolean> {
+    const m = matchRef.current;
+    const send = sendRef.current;
+    if (!m || !send || gameBusyRef.current) return false;
+    gameBusyRef.current = true;
+    setGameBusy(true);
+    setError("");
+    try {
+      const reply = await send({
+        type: "game.command",
+        match_id: m.match_id,
+        payload: {
+          command_id: crypto.randomUUID(),
+          expected_revision: m.revision,
+          kind,
+          payload,
+        },
+      });
+      if (reply.type === "ack") return true;
+      const p = reply.payload ?? {};
+      setError(
+        p.code === "STALE_REVISION"
+          ? "The table changed before your move arrived. Check the table and try again."
+          : ruleMessage(p.message),
+      );
+      return false;
+    } finally {
+      gameBusyRef.current = false;
+      setGameBusy(false);
+    }
+  }
   function openRoom(id: string | null) {
     // Reselecting the open room would clear it without triggering a reload.
     if (id === selected) return;
+    setMatch(null);
+    setReplaced(false);
     setSelected(id);
+    if (id) sessionStorage.setItem("cardplay_room", id);
+    else sessionStorage.removeItem("cardplay_room");
     setView(null);
     setChat([]);
     setCreatedInvites([]);
@@ -320,6 +510,16 @@ export function Dashboard() {
     setCreatedInvites(result.items);
   }
   const approvedFriends = friends.filter((f) => f.status === "accepted");
+  const roomMatch = match && match.room_id === selected ? match : null;
+  const showTable = !!roomMatch && liveMatch(roomMatch.status);
+  const showResult =
+    !!roomMatch && !showTable && dismissedMatch !== roomMatch.match_id;
+  const lobby = !!view && view.room.status === "waiting";
+  const everyoneReady =
+    !!view && view.members.length >= 2 && view.members.every((m) => m.ready);
+  const unread = chatVisible
+    ? 0
+    : chat.filter((m) => m.id > chatBoundary && m.user_id !== user?.id).length;
   const roomFull = !!view && view.members.length >= view.room.capacity;
   const activeCreatedInvites = createdInvites.filter(
     (invite) => !invite.revoked_at && !invite.accepted_at,
@@ -720,288 +920,401 @@ export function Dashboard() {
                 </div>
                 <span className="pill">{connection}</span>
               </div>
-              <div className="room-grid">
-                <section className="panel">
-                  <h2>A seat for everyone</h2>
-                  {!view && (
-                    <p role="status" className="muted">
-                      Loading your private room…
-                    </p>
-                  )}
-                  <p className="muted">
-                    {view?.members.length ?? 0} of {view?.room.capacity ?? 5}{" "}
-                    seats filled
-                  </p>
-                  <div className="seat-list">
-                    {view?.members.map((member) => (
-                      <div className="seat" key={member.id}>
-                        <span className="avatar">
-                          {member.display_name.slice(0, 1).toUpperCase()}
-                        </span>
-                        <div>
-                          <strong>{member.display_name}</strong>
-                          <small>
-                            @{member.handle}
-                            {view.room.host_id === member.id ? " · Host" : ""}
-                          </small>
-                        </div>
-                        <span className={`pill ${member.ready ? "ready" : ""}`}>
-                          {member.ready ? "Ready" : "Getting settled"}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+              {replaced && (
+                <div className="notice" role="status">
+                  This match is open in another tab or window, which now
+                  controls your seat.{" "}
                   <button
-                    className="primary"
-                    disabled={busy || !view}
-                    onClick={() =>
-                      void run(async () => {
-                        await api(`/rooms/${selected}/ready`, "PUT", {
-                          ready: !view?.members.find((m) => m.id === user.id)
-                            ?.ready,
-                        });
-                      })
-                    }
+                    className="text-button"
+                    onClick={() => {
+                      setReplaced(false);
+                      setSocketNonce((n) => n + 1);
+                    }}
                   >
-                    {view?.members.find((m) => m.id === user.id)?.ready
-                      ? "Not ready yet"
-                      : "I'm ready"}
+                    Play here instead
                   </button>
-                  <p className="release-note">
-                    Rooms and chat are open. Playable Monopoly Deal is coming in
-                    the next milestone.
-                  </p>
-                  {view &&
-                  view.room.status === "waiting" &&
-                  view.room.host_id === user.id ? (
-                    <div className="room-controls">
-                      <h2>Host controls</h2>
-                      <form
-                        onSubmit={(event) =>
-                          submit(event, async (data) => {
-                            await api(`/rooms/${selected}`, "PATCH", {
-                              name: data.get("name"),
-                              capacity: Number(data.get("capacity")),
-                            });
-                            await refresh();
-                            setNotice("Room updated.");
-                          })
-                        }
-                      >
-                        <label>
-                          Room name
-                          <input
-                            name="name"
-                            key={`${view.room.id}:${view.room.name}`}
-                            defaultValue={view.room.name}
-                            maxLength={80}
-                            required
-                          />
-                        </label>
-                        <label>
-                          Maximum players
-                          <select
-                            name="capacity"
-                            key={`${view.room.id}:${view.room.capacity}`}
-                            defaultValue={view.room.capacity}
-                          >
-                            {[2, 3, 4, 5].map((n) => (
-                              <option key={n} value={n}>
-                                {n} players
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <button className="secondary" disabled={busy}>
-                          Save room
-                        </button>
-                      </form>
-                      {view.members
-                        .filter((member) => member.id !== user.id)
-                        .map((member) => (
-                          <div className="friend-row" key={member.id}>
-                            <span>@{member.handle}</span>
-                            <button
-                              className="text-button"
-                              disabled={busy}
-                              onClick={() =>
-                                void run(async () => {
-                                  await api(`/rooms/${selected}/host`, "PUT", {
-                                    user_id: member.id,
-                                  });
-                                  setNotice(`@${member.handle} is now host.`);
-                                })
-                              }
-                            >
-                              Make host
-                            </button>
-                            <button
-                              className="text-button"
-                              disabled={busy}
-                              onClick={() =>
-                                void run(async () => {
-                                  if (
-                                    !window.confirm(
-                                      `Remove @${member.handle} from this room?`,
-                                    )
-                                  )
-                                    return;
-                                  await api(
-                                    `/rooms/${selected}/members/${member.id}`,
-                                    "DELETE",
-                                  );
-                                  setNotice(`@${member.handle} was removed.`);
-                                })
-                              }
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        ))}
+                </div>
+              )}
+              {(showTable || showResult) && roomMatch && (
+                <section
+                  className="panel match-panel"
+                  aria-label={showTable ? "Match" : "Last match result"}
+                >
+                  {showResult && (
+                    <div className="section-heading">
+                      <h2>Last match</h2>
                       <button
                         className="text-button"
-                        disabled={busy}
-                        onClick={() =>
-                          void run(async () => {
-                            if (!window.confirm("Close this private room?"))
-                              return;
-                            await api(`/rooms/${selected}`, "DELETE");
-                            openRoom(null);
-                            await refresh();
-                            setNotice("Room closed.");
-                          })
-                        }
+                        onClick={() => setDismissedMatch(roomMatch.match_id)}
                       >
-                        Close room
+                        Hide result
                       </button>
                     </div>
-                  ) : view && view.room.status === "waiting" ? (
-                    <button
-                      className="text-button"
-                      disabled={busy}
-                      onClick={() =>
+                  )}
+                  {Object.keys(cards).length === 0 ? (
+                    <p role="status" className="muted">
+                      Loading cards…
+                    </p>
+                  ) : (
+                    <GameTable
+                      state={roomMatch}
+                      me={user.id}
+                      cards={cards}
+                      busy={gameBusy || replaced}
+                      onCommand={command}
+                      onLeave={() =>
                         void run(async () => {
-                          await api(`/rooms/${selected}/leave`, "POST");
-                          openRoom(null);
-                          await refresh();
-                          setNotice("You left the room.");
+                          await api(
+                            `/matches/${roomMatch.match_id}/leave`,
+                            "POST",
+                          );
+                          setNotice(
+                            "You left the match. It ended with no winner.",
+                          );
                         })
                       }
-                    >
-                      Leave room
-                    </button>
-                  ) : null}
-                </section>
-                <section className="panel">
-                  <h2>Invite your people</h2>
-                  <p className="muted">
-                    Links expire after 30 minutes. A seat is held only once your
-                    friend joins.
-                  </p>
-                  {roomFull && (
-                    <p className="notice" role="status">
-                      This room is full. Increase the limit or remove a player
-                      before inviting anyone else.
-                    </p>
+                      onVote={(vote) =>
+                        void run(async () => {
+                          await api(
+                            `/matches/${roomMatch.match_id}/abandon`,
+                            "POST",
+                            { vote },
+                          );
+                        })
+                      }
+                    />
                   )}
-                  <button
-                    className="secondary"
-                    disabled={busy || roomFull || !view}
-                    onClick={() =>
-                      void run(async () => {
-                        const invite = await api<{ token: string }>(
-                          `/rooms/${selected}/invitations`,
-                          "POST",
-                          {},
-                        );
-                        setLink(`${location.origin}/#invite=${invite.token}`);
-                        await refreshCreatedInvites(selected);
-                      })
-                    }
-                  >
-                    Create an invite link ↗
-                  </button>
-                  {link && (
-                    <label>
-                      Share this link
-                      <input
-                        readOnly
-                        value={link}
-                        onFocus={(e) => e.currentTarget.select()}
-                      />
+                </section>
+              )}
+              {unread > 0 && (
+                <button
+                  className="unread-badge"
+                  onClick={() =>
+                    chatPanel.current?.scrollIntoView({ behavior: "smooth" })
+                  }
+                >
+                  {unread} new chat message{unread === 1 ? "" : "s"} ↓
+                </button>
+              )}
+              <div className="room-grid">
+                {!showTable && (
+                  <section className="panel">
+                    <h2>A seat for everyone</h2>
+                    {!view && (
+                      <p role="status" className="muted">
+                        Loading your private room…
+                      </p>
+                    )}
+                    <p className="muted">
+                      {view?.members.length ?? 0} of {view?.room.capacity ?? 5}{" "}
+                      seats filled
+                    </p>
+                    <div className="seat-list">
+                      {view?.members.map((member) => (
+                        <div className="seat" key={member.id}>
+                          <span className="avatar">
+                            {member.display_name.slice(0, 1).toUpperCase()}
+                          </span>
+                          <div>
+                            <strong>{member.display_name}</strong>
+                            <small>
+                              @{member.handle}
+                              {view.room.host_id === member.id ? " · Host" : ""}
+                            </small>
+                          </div>
+                          <span
+                            className={`pill ${member.ready ? "ready" : ""}`}
+                          >
+                            {member.ready ? "Ready" : "Getting settled"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {lobby && (
                       <button
-                        className="text-button"
+                        className="primary"
+                        disabled={busy || !view}
                         onClick={() =>
                           void run(async () => {
-                            await navigator.clipboard.writeText(link);
-                            setNotice("Invite link copied.");
+                            await api(`/rooms/${selected}/ready`, "PUT", {
+                              ready: !view?.members.find(
+                                (m) => m.id === user.id,
+                              )?.ready,
+                            });
                           })
                         }
                       >
-                        Copy link
+                        {view?.members.find((m) => m.id === user.id)?.ready
+                          ? "Not ready yet"
+                          : "I'm ready"}
                       </button>
-                    </label>
-                  )}
-                  {approvedFriends
-                    .filter(
-                      (friend) =>
-                        !view?.members.some(
-                          (member) => member.id === friend.id,
-                        ),
-                    )
-                    .map((friend) => (
-                      <div className="friend-row" key={friend.id}>
-                        <span>@{friend.handle}</span>
-                        <button
-                          className="text-button"
-                          disabled={busy || roomFull || !view}
-                          onClick={() =>
-                            void run(async () => {
-                              await api(
-                                `/rooms/${selected}/invitations`,
-                                "POST",
-                                { target_id: friend.id },
-                              );
-                              await refreshCreatedInvites(selected);
-                              setNotice(
-                                `Invitation sent to @${friend.handle}.`,
-                              );
+                    )}
+                    {lobby && view?.room.host_id === user.id ? (
+                      <button
+                        className="primary"
+                        disabled={busy || !everyoneReady}
+                        onClick={() =>
+                          void run(async () => {
+                            await api(`/rooms/${selected}/matches`, "POST");
+                            setDismissedMatch(roomMatch?.match_id ?? null);
+                          })
+                        }
+                      >
+                        Start match
+                      </button>
+                    ) : null}
+                    <p className="release-note">
+                      {lobby
+                        ? everyoneReady
+                          ? view?.room.host_id === user.id
+                            ? "Everyone is ready. Start when you like."
+                            : "Everyone is ready. Waiting for the host to start."
+                          : "The host can start once 2-5 players are all ready."
+                        : "A match is in progress."}
+                    </p>
+                    {view &&
+                    view.room.status === "waiting" &&
+                    view.room.host_id === user.id ? (
+                      <div className="room-controls">
+                        <h2>Host controls</h2>
+                        <form
+                          onSubmit={(event) =>
+                            submit(event, async (data) => {
+                              await api(`/rooms/${selected}`, "PATCH", {
+                                name: data.get("name"),
+                                capacity: Number(data.get("capacity")),
+                              });
+                              await refresh();
+                              setNotice("Room updated.");
                             })
                           }
                         >
-                          Invite
+                          <label>
+                            Room name
+                            <input
+                              name="name"
+                              key={`${view.room.id}:${view.room.name}`}
+                              defaultValue={view.room.name}
+                              maxLength={80}
+                              required
+                            />
+                          </label>
+                          <label>
+                            Maximum players
+                            <select
+                              name="capacity"
+                              key={`${view.room.id}:${view.room.capacity}`}
+                              defaultValue={view.room.capacity}
+                            >
+                              {[2, 3, 4, 5].map((n) => (
+                                <option key={n} value={n}>
+                                  {n} players
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button className="secondary" disabled={busy}>
+                            Save room
+                          </button>
+                        </form>
+                        {view.members
+                          .filter((member) => member.id !== user.id)
+                          .map((member) => (
+                            <div className="friend-row" key={member.id}>
+                              <span>@{member.handle}</span>
+                              <button
+                                className="text-button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void run(async () => {
+                                    await api(
+                                      `/rooms/${selected}/host`,
+                                      "PUT",
+                                      {
+                                        user_id: member.id,
+                                      },
+                                    );
+                                    setNotice(`@${member.handle} is now host.`);
+                                  })
+                                }
+                              >
+                                Make host
+                              </button>
+                              <button
+                                className="text-button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void run(async () => {
+                                    if (
+                                      !window.confirm(
+                                        `Remove @${member.handle} from this room?`,
+                                      )
+                                    )
+                                      return;
+                                    await api(
+                                      `/rooms/${selected}/members/${member.id}`,
+                                      "DELETE",
+                                    );
+                                    setNotice(`@${member.handle} was removed.`);
+                                  })
+                                }
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(async () => {
+                              if (!window.confirm("Close this private room?"))
+                                return;
+                              await api(`/rooms/${selected}`, "DELETE");
+                              openRoom(null);
+                              await refresh();
+                              setNotice("Room closed.");
+                            })
+                          }
+                        >
+                          Close room
                         </button>
                       </div>
-                    ))}
-                  {activeCreatedInvites.length === 0 && (
-                    <p className="muted">No active invitations from you yet.</p>
-                  )}
-                  {activeCreatedInvites.map((invite) => (
-                    <div className="friend-row" key={invite.id}>
-                      <span>
-                        {invite.target_id ? "Friend invitation" : "Invite link"}
-                        <small>
-                          Expires {new Date(invite.expires_at).toLocaleString()}
-                        </small>
-                      </span>
+                    ) : view && view.room.status === "waiting" ? (
                       <button
                         className="text-button"
                         disabled={busy}
                         onClick={() =>
                           void run(async () => {
-                            await api(`/invitations/${invite.id}`, "DELETE");
-                            setLink("");
-                            await refreshCreatedInvites(selected);
-                            setNotice("Invitation revoked.");
+                            await api(`/rooms/${selected}/leave`, "POST");
+                            openRoom(null);
+                            await refresh();
+                            setNotice("You left the room.");
                           })
                         }
                       >
-                        Revoke
+                        Leave room
                       </button>
-                    </div>
-                  ))}
-                </section>
-                <section className="panel chat-panel">
+                    ) : null}
+                  </section>
+                )}
+                {!showTable && (
+                  <section className="panel">
+                    <h2>Invite your people</h2>
+                    <p className="muted">
+                      Links expire after 30 minutes. A seat is held only once
+                      your friend joins.
+                    </p>
+                    {roomFull && (
+                      <p className="notice" role="status">
+                        This room is full. Increase the limit or remove a player
+                        before inviting anyone else.
+                      </p>
+                    )}
+                    <button
+                      className="secondary"
+                      disabled={busy || roomFull || !view}
+                      onClick={() =>
+                        void run(async () => {
+                          const invite = await api<{ token: string }>(
+                            `/rooms/${selected}/invitations`,
+                            "POST",
+                            {},
+                          );
+                          setLink(`${location.origin}/#invite=${invite.token}`);
+                          await refreshCreatedInvites(selected);
+                        })
+                      }
+                    >
+                      Create an invite link ↗
+                    </button>
+                    {link && (
+                      <label>
+                        Share this link
+                        <input
+                          readOnly
+                          value={link}
+                          onFocus={(e) => e.currentTarget.select()}
+                        />
+                        <button
+                          className="text-button"
+                          onClick={() =>
+                            void run(async () => {
+                              await navigator.clipboard.writeText(link);
+                              setNotice("Invite link copied.");
+                            })
+                          }
+                        >
+                          Copy link
+                        </button>
+                      </label>
+                    )}
+                    {approvedFriends
+                      .filter(
+                        (friend) =>
+                          !view?.members.some(
+                            (member) => member.id === friend.id,
+                          ),
+                      )
+                      .map((friend) => (
+                        <div className="friend-row" key={friend.id}>
+                          <span>@{friend.handle}</span>
+                          <button
+                            className="text-button"
+                            disabled={busy || roomFull || !view}
+                            onClick={() =>
+                              void run(async () => {
+                                await api(
+                                  `/rooms/${selected}/invitations`,
+                                  "POST",
+                                  { target_id: friend.id },
+                                );
+                                await refreshCreatedInvites(selected);
+                                setNotice(
+                                  `Invitation sent to @${friend.handle}.`,
+                                );
+                              })
+                            }
+                          >
+                            Invite
+                          </button>
+                        </div>
+                      ))}
+                    {activeCreatedInvites.length === 0 && (
+                      <p className="muted">
+                        No active invitations from you yet.
+                      </p>
+                    )}
+                    {activeCreatedInvites.map((invite) => (
+                      <div className="friend-row" key={invite.id}>
+                        <span>
+                          {invite.target_id
+                            ? "Friend invitation"
+                            : "Invite link"}
+                          <small>
+                            Expires{" "}
+                            {new Date(invite.expires_at).toLocaleString()}
+                          </small>
+                        </span>
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(async () => {
+                              await api(`/invitations/${invite.id}`, "DELETE");
+                              setLink("");
+                              await refreshCreatedInvites(selected);
+                              setNotice("Invitation revoked.");
+                            })
+                          }
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                    ))}
+                  </section>
+                )}
+                <section className="panel chat-panel" ref={chatPanel}>
                   <div className="section-heading">
                     <h2>At the table</h2>
                     <span className="muted">Room chat</span>
@@ -1026,6 +1339,48 @@ export function Dashboard() {
                             })}
                           </time>
                           <p>{msg.body}</p>
+                          {msg.user_id !== user.id && (
+                            <span className="message-tools">
+                              <button
+                                className="text-button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void run(async () => {
+                                    const reason = window.prompt(
+                                      "Why are you reporting this message?",
+                                    );
+                                    if (!reason?.trim()) return;
+                                    await api(
+                                      `/rooms/${selected}/chat/${msg.id}/report`,
+                                      "POST",
+                                      { reason: reason.trim().slice(0, 500) },
+                                    );
+                                    setNotice("Message reported. Thank you.");
+                                  })
+                                }
+                              >
+                                Report
+                              </button>
+                              <button
+                                className="text-button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void run(async () => {
+                                    await api(`/mutes/${msg.user_id}`, "PUT");
+                                    await Promise.all([
+                                      refresh(),
+                                      loadChat(selected, true),
+                                    ]);
+                                    setNotice(
+                                      `${msg.display_name} is muted. Unmute them under Better with friends.`,
+                                    );
+                                  })
+                                }
+                              >
+                                Mute
+                              </button>
+                            </span>
+                          )}
                         </div>
                       ))
                     )}
@@ -1369,6 +1724,25 @@ export function Dashboard() {
                         }
                       >
                         Block
+                      </button>
+                    </div>
+                  ))}
+                  {mutes.length > 0 && <h3>Muted in chat</h3>}
+                  {mutes.map((muted) => (
+                    <div className="friend-row" key={muted.id}>
+                      <span>@{muted.handle}</span>
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() =>
+                          void run(async () => {
+                            await api(`/mutes/${muted.id}`, "DELETE");
+                            await refresh();
+                            setNotice(`@${muted.handle} unmuted.`);
+                          })
+                        }
+                      >
+                        Unmute
                       </button>
                     </div>
                   ))}

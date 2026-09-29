@@ -14,22 +14,31 @@ type Querier interface {
 	AbsentHostRooms(ctx context.Context) ([]string, error)
 	AcceptFriend(ctx context.Context, arg AcceptFriendParams) (int64, error)
 	AcceptInvitation(ctx context.Context, id string) error
+	ActiveMatchesForUser(ctx context.Context, userID string) ([]string, error)
 	AddMember(ctx context.Context, arg AddMemberParams) error
+	AddParticipant(ctx context.Context, arg AddParticipantParams) error
+	AdvanceMatch(ctx context.Context, arg AdvanceMatchParams) error
 	AnonymizeUser(ctx context.Context, arg AnonymizeUserParams) error
 	AreFriends(ctx context.Context, arg AreFriendsParams) (bool, error)
 	BanMember(ctx context.Context, arg BanMemberParams) error
 	BlockUser(ctx context.Context, arg BlockUserParams) (int64, error)
+	BumpMatchVersion(ctx context.Context, id string) error
 	BumpRoom(ctx context.Context, id string) error
 	ChangeDisplayName(ctx context.Context, arg ChangeDisplayNameParams) error
 	ChangePassword(ctx context.Context, arg ChangePasswordParams) error
+	ChatAuthor(ctx context.Context, arg ChatAuthorParams) (string, error)
 	ChatPage(ctx context.Context, arg ChatPageParams) ([]ChatPageRow, error)
 	ChatRecentCount(ctx context.Context, userID string) (int64, error)
+	ClearAbandonVotes(ctx context.Context, matchID string) error
 	CloseHostedRooms(ctx context.Context, hostID string) ([]string, error)
 	CloseRoom(ctx context.Context, id string) error
 	ConsumeAccountToken(ctx context.Context, arg ConsumeAccountTokenParams) (string, error)
+	ControllerDisconnected(ctx context.Context, arg ControllerDisconnectedParams) (int64, error)
+	ControllerHeartbeat(ctx context.Context, arg ControllerHeartbeatParams) (int64, error)
 	CreateAccountToken(ctx context.Context, arg CreateAccountTokenParams) error
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error)
 	CreateLoginDevice(ctx context.Context, arg CreateLoginDeviceParams) error
+	CreateMatch(ctx context.Context, arg CreateMatchParams) (Match, error)
 	CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
@@ -39,36 +48,53 @@ type Querier interface {
 	DeleteExpiredLoginDevices(ctx context.Context) error
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteFriendships(ctx context.Context, requesterID string) error
+	DeleteMutes(ctx context.Context, userID string) error
 	DeletePurposeTokens(ctx context.Context, arg DeletePurposeTokensParams) error
 	DeleteSession(ctx context.Context, tokenHash string) error
+	EndMatch(ctx context.Context, arg EndMatchParams) error
 	Enqueue(ctx context.Context, arg EnqueueParams) error
 	ExistingChat(ctx context.Context, arg ExistingChatParams) (RoomChat, error)
+	ExpiredMatches(ctx context.Context) ([]string, error)
+	FindCommand(ctx context.Context, arg FindCommandParams) (GameCommand, error)
 	HasBlock(ctx context.Context, arg HasBlockParams) (bool, error)
 	HostStillAbsent(ctx context.Context, arg HostStillAbsentParams) (bool, error)
 	InsertChat(ctx context.Context, arg InsertChatParams) (RoomChat, error)
+	InsertCommand(ctx context.Context, arg InsertCommandParams) error
+	InsertGameEvent(ctx context.Context, arg InsertGameEventParams) error
+	InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) error
 	Invitation(ctx context.Context, id string) (Invitation, error)
 	InvitationByToken(ctx context.Context, tokenHash pgtype.Text) (Invitation, error)
 	IsMember(ctx context.Context, arg IsMemberParams) (bool, error)
 	IsParticipant(ctx context.Context, arg IsParticipantParams) (bool, error)
 	IsRoomBanned(ctx context.Context, arg IsRoomBannedParams) (bool, error)
+	LatestRoomMatch(ctx context.Context, roomID string) (Match, error)
 	LatestSnapshot(ctx context.Context, matchID string) (GameSnapshot, error)
 	ListBlocks(ctx context.Context, userID string) ([]ListBlocksRow, error)
 	ListFriendships(ctx context.Context, requesterID string) ([]ListFriendshipsRow, error)
+	ListMutes(ctx context.Context, userID string) ([]ListMutesRow, error)
 	ListSessions(ctx context.Context, userID string) ([]ListSessionsRow, error)
+	LockMatch(ctx context.Context, id string) (Match, error)
 	LockRoom(ctx context.Context, id string) (Room, error)
 	LockSocialPair(ctx context.Context, pair string) error
 	LoginDeviceKnown(ctx context.Context, arg LoginDeviceKnownParams) (bool, error)
 	MarkRoomSeen(ctx context.Context, arg MarkRoomSeenParams) (int64, error)
 	Match(ctx context.Context, id string) (Match, error)
+	MatchParticipant(ctx context.Context, arg MatchParticipantParams) (MatchParticipant, error)
+	MatchParticipants(ctx context.Context, matchID string) ([]MatchParticipantsRow, error)
 	Members(ctx context.Context, roomID string) ([]MembersRow, error)
+	MuteUser(ctx context.Context, arg MuteUserParams) (int64, error)
 	MyInvitations(ctx context.Context, userID string) ([]MyInvitationsRow, error)
 	MyRooms(ctx context.Context, userID string) ([]Room, error)
 	OldestActiveRoomMember(ctx context.Context, arg OldestActiveRoomMemberParams) (string, error)
+	PruneEndedSnapshots(ctx context.Context) error
 	PurgeChat(ctx context.Context) error
+	PurgeOldMatches(ctx context.Context) error
 	PurgeOutbox(ctx context.Context) error
+	RecentEvents(ctx context.Context, arg RecentEventsParams) ([]RecentEventsRow, error)
 	RemoveFriend(ctx context.Context, arg RemoveFriendParams) error
 	RemoveFromWaitingRooms(ctx context.Context, userID string) ([]string, error)
 	RemoveMember(ctx context.Context, arg RemoveMemberParams) (int64, error)
+	ReportChat(ctx context.Context, arg ReportChatParams) (int64, error)
 	RequestFriend(ctx context.Context, arg RequestFriendParams) (int64, error)
 	ResetReady(ctx context.Context, roomID string) error
 	RevokeAllSessions(ctx context.Context, userID string) error
@@ -83,9 +109,15 @@ type Querier interface {
 	RoomInvitationsByCreator(ctx context.Context, arg RoomInvitationsByCreatorParams) ([]RoomInvitationsByCreatorRow, error)
 	SearchPublicUser(ctx context.Context, arg SearchPublicUserParams) (SearchPublicUserRow, error)
 	SessionUser(ctx context.Context, tokenHash string) (SessionUserRow, error)
+	SetAbandonVote(ctx context.Context, arg SetAbandonVoteParams) error
+	SetMatchStatus(ctx context.Context, arg SetMatchStatusParams) error
 	SetReady(ctx context.Context, arg SetReadyParams) error
 	SetRoomHost(ctx context.Context, arg SetRoomHostParams) error
+	SetRoomStatus(ctx context.Context, arg SetRoomStatusParams) error
+	StaleControllers(ctx context.Context) ([]string, error)
+	TakeControl(ctx context.Context, arg TakeControlParams) (int64, error)
 	UnblockUser(ctx context.Context, arg UnblockUserParams) error
+	UnmuteUser(ctx context.Context, arg UnmuteUserParams) error
 	UpdateRoom(ctx context.Context, arg UpdateRoomParams) error
 	UserByEmail(ctx context.Context, email string) (User, error)
 	UserByIDForUpdate(ctx context.Context, id string) (User, error)

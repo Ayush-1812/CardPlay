@@ -13,6 +13,7 @@ import (
 	"cardplay/internal/rooms"
 	"cardplay/internal/social"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -36,8 +37,8 @@ func New(db *pgxpool.Pool, c config.Config) *App {
 	friends := &social.Module{DB: db}
 	ch := &chat.Module{DB: db}
 	games := game.NewRegistry(monopoly.Module{})
-	match := &matches.Module{DB: db, Games: games}
-	hub := realtime.New(db, rm, ch, c.Origin)
+	match := &matches.Module{DB: db, Games: games, Random: rand.Reader}
+	hub := realtime.New(db, rm, ch, match, c.Origin)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.Recoverer)
 	r.Use(func(next http.Handler) http.Handler {
@@ -63,6 +64,16 @@ func New(db *pgxpool.Pool, c config.Config) *App {
 		r.Use(auth.Authenticate)
 		r.Get("/games", func(w http.ResponseWriter, r *http.Request) {
 			httpx.JSON(w, 200, map[string]any{"items": games.Catalog()})
+		})
+		r.Get("/games/{gameID}/cards", func(w http.ResponseWriter, r *http.Request) {
+			g, ok := games.Find(chi.URLParam(r, "gameID"))
+			catalog, hasCards := g.(game.CardCatalog)
+			if !ok || !hasCards {
+				httpx.Error(w, r, 404, "NOT_FOUND", "Game not found")
+				return
+			}
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			httpx.JSON(w, 200, map[string]any{"items": catalog.Cards()})
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(newAuthLimiter(auth.KnownDevice))
@@ -105,8 +116,14 @@ func New(db *pgxpool.Pool, c config.Config) *App {
 			r.Delete("/invitations/{invitationID}", rm.Revoke)
 			r.Get("/rooms/{roomID}/chat", ch.List)
 			r.Post("/rooms/{roomID}/chat", ch.Post)
-			r.Post("/rooms/{roomID}/matches", match.Start)
+			r.With(newLimiter(10, time.Minute)).Post("/rooms/{roomID}/chat/{messageID}/report", ch.Report)
+			r.Get("/mutes", friends.Mutes)
+			r.With(newLimiter(20, time.Minute)).Put("/mutes/{userID}", friends.Mute)
+			r.Delete("/mutes/{userID}", friends.Unmute)
+			r.With(newLimiter(10, time.Minute)).Post("/rooms/{roomID}/matches", match.Start)
 			r.Get("/matches/{matchID}", match.View)
+			r.Post("/matches/{matchID}/leave", match.LeaveMatch)
+			r.With(newLimiter(20, time.Minute)).Post("/matches/{matchID}/abandon", match.Vote)
 		})
 	})
 	r.With(auth.Authenticate, httpx.Verified).Get("/ws", hub.ServeHTTP)

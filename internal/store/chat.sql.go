@@ -10,11 +10,28 @@ import (
 	"time"
 )
 
+const chatAuthor = `-- name: ChatAuthor :one
+SELECT user_id FROM room_chat WHERE id=$1 AND room_id=$2 AND created_at>now()-interval '7 days'
+`
+
+type ChatAuthorParams struct {
+	ID     int64  `json:"id"`
+	RoomID string `json:"room_id"`
+}
+
+func (q *Queries) ChatAuthor(ctx context.Context, arg ChatAuthorParams) (string, error) {
+	row := q.db.QueryRow(ctx, chatAuthor, arg.ID, arg.RoomID)
+	var user_id string
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const chatPage = `-- name: ChatPage :many
 SELECT c.id,c.user_id,u.handle,u.display_name,c.body,c.created_at,c.client_id
 FROM room_chat c JOIN users u ON u.id=c.user_id
 WHERE c.room_id=$1 AND c.id>$2::bigint AND c.created_at>now()-interval '7 days'
 AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE b.user_id=$3::uuid AND b.blocked_id=c.user_id)
+AND NOT EXISTS(SELECT 1 FROM user_mutes mu WHERE mu.user_id=$3::uuid AND mu.muted_id=c.user_id)
 ORDER BY CASE WHEN $2::bigint=0 THEN -c.id ELSE c.id END LIMIT 100
 `
 
@@ -71,6 +88,15 @@ func (q *Queries) ChatRecentCount(ctx context.Context, userID string) (int64, er
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteMutes = `-- name: DeleteMutes :exec
+DELETE FROM user_mutes WHERE user_id=$1 OR muted_id=$1
+`
+
+func (q *Queries) DeleteMutes(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteMutes, userID)
+	return err
 }
 
 const enqueue = `-- name: Enqueue :exec
@@ -142,6 +168,56 @@ func (q *Queries) InsertChat(ctx context.Context, arg InsertChatParams) (RoomCha
 	return i, err
 }
 
+const listMutes = `-- name: ListMutes :many
+SELECT u.id,u.handle,u.display_name FROM user_mutes m JOIN users u ON u.id=m.muted_id
+WHERE m.user_id=$1 AND u.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 100
+`
+
+type ListMutesRow struct {
+	ID          string `json:"id"`
+	Handle      string `json:"handle"`
+	DisplayName string `json:"display_name"`
+}
+
+func (q *Queries) ListMutes(ctx context.Context, userID string) ([]ListMutesRow, error) {
+	rows, err := q.db.Query(ctx, listMutes, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMutesRow{}
+	for rows.Next() {
+		var i ListMutesRow
+		if err := rows.Scan(&i.ID, &i.Handle, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const muteUser = `-- name: MuteUser :execrows
+INSERT INTO user_mutes(user_id,muted_id)
+SELECT $1::uuid,u.id FROM users u WHERE u.id=$2::uuid AND u.deleted_at IS NULL
+ON CONFLICT DO NOTHING
+`
+
+type MuteUserParams struct {
+	UserID  string `json:"user_id"`
+	MutedID string `json:"muted_id"`
+}
+
+func (q *Queries) MuteUser(ctx context.Context, arg MuteUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, muteUser, arg.UserID, arg.MutedID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const purgeChat = `-- name: PurgeChat :exec
 DELETE FROM room_chat WHERE created_at<=now()-interval '7 days'
 `
@@ -157,5 +233,37 @@ DELETE FROM outbox WHERE created_at<now()-interval '1 day'
 
 func (q *Queries) PurgeOutbox(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, purgeOutbox)
+	return err
+}
+
+const reportChat = `-- name: ReportChat :execrows
+INSERT INTO chat_reports(message_id,reporter_id,reason) VALUES($1,$2,$3) ON CONFLICT DO NOTHING
+`
+
+type ReportChatParams struct {
+	MessageID  int64  `json:"message_id"`
+	ReporterID string `json:"reporter_id"`
+	Reason     string `json:"reason"`
+}
+
+func (q *Queries) ReportChat(ctx context.Context, arg ReportChatParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reportChat, arg.MessageID, arg.ReporterID, arg.Reason)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unmuteUser = `-- name: UnmuteUser :exec
+DELETE FROM user_mutes WHERE user_id=$1 AND muted_id=$2
+`
+
+type UnmuteUserParams struct {
+	UserID  string `json:"user_id"`
+	MutedID string `json:"muted_id"`
+}
+
+func (q *Queries) UnmuteUser(ctx context.Context, arg UnmuteUserParams) error {
+	_, err := q.db.Exec(ctx, unmuteUser, arg.UserID, arg.MutedID)
 	return err
 }

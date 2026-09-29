@@ -1,74 +1,86 @@
 package matches
 
 import (
-	"cardplay/internal/game"
+	"errors"
+	"net/http"
+
 	"cardplay/internal/httpx"
 	"cardplay/internal/store"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"net/http"
 )
 
-type Module struct {
-	DB    *pgxpool.Pool
-	Games *game.Registry
+// WriteError renders match errors; anything else is a database error.
+func WriteError(w http.ResponseWriter, r *http.Request, err error) {
+	var me *Error
+	if errors.As(err, &me) {
+		httpx.Error(w, r, me.Status, me.Code, me.Message)
+		return
+	}
+	httpx.DBError(w, r, err)
 }
 
+// Start is POST /rooms/{roomID}/matches: host only, everyone ready.
 func (m *Module) Start(w http.ResponseWriter, r *http.Request) {
-	q := store.New(m.DB)
-	id := chi.URLParam(r, "roomID")
-	member, err := q.IsMember(r.Context(), store.IsMemberParams{RoomID: id, UserID: httpx.Actor(r).ID})
+	var id string
+	err := m.tx(r.Context(), func(q *store.Queries) error {
+		var err error
+		id, err = m.start(r.Context(), q, chi.URLParam(r, "roomID"), httpx.Actor(r).ID)
+		return err
+	})
 	if err != nil {
-		httpx.DBError(w, r, err)
+		WriteError(w, r, err)
 		return
 	}
-	if !member {
-		httpx.Error(w, r, 404, "NOT_FOUND", "Room not found")
-		return
-	}
-	room, err := q.Room(r.Context(), id)
-	if err != nil {
-		httpx.DBError(w, r, err)
-		return
-	}
-	if room.HostID != httpx.Actor(r).ID {
-		httpx.Error(w, r, 403, "FORBIDDEN", "Only the host may start")
-		return
-	}
-	httpx.Error(w, r, 501, "GAME_NOT_READY", "The foundation supports lobbies; the rules engine is the next milestone")
+	httpx.JSON(w, 201, map[string]string{"match_id": id})
 }
+
+// View is GET /matches/{matchID}: the caller's projection, for resync
+// without taking control of the seat.
 func (m *Module) View(w http.ResponseWriter, r *http.Request) {
-	q := store.New(m.DB)
 	id := chi.URLParam(r, "matchID")
-	actor := httpx.Actor(r).ID
-	ok, err := q.IsParticipant(r.Context(), store.IsParticipantParams{MatchID: id, UserID: actor})
-	if err != nil {
-		httpx.DBError(w, r, err)
-		return
-	}
-	if !ok {
+	if !httpx.UUID(id) {
 		httpx.Error(w, r, 404, "NOT_FOUND", "Match not found")
 		return
 	}
-	match, err := q.Match(r.Context(), id)
+	st, err := m.StateFor(r.Context(), id, httpx.Actor(r).ID, 0)
 	if err != nil {
-		httpx.DBError(w, r, err)
+		WriteError(w, r, err)
 		return
 	}
-	g, ok := m.Games.Get(match.GameID, match.RulesVersion)
-	if !ok || !g.Descriptor().Playable {
-		httpx.Error(w, r, 501, "GAME_NOT_READY", "This rules engine is not installed")
+	httpx.JSON(w, 200, st)
+}
+
+// LeaveMatch is POST /matches/{matchID}/leave.
+func (m *Module) LeaveMatch(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "matchID")
+	if !httpx.UUID(id) {
+		httpx.Error(w, r, 404, "NOT_FOUND", "Match not found")
 		return
 	}
-	snapshot, err := q.LatestSnapshot(r.Context(), id)
-	if err != nil {
-		httpx.DBError(w, r, err)
+	if err := m.tx(r.Context(), func(q *store.Queries) error { return Leave(r.Context(), q, id, httpx.Actor(r).ID) }); err != nil {
+		WriteError(w, r, err)
 		return
 	}
-	view, err := g.View(game.State{SchemaVersion: int(snapshot.SchemaVersion), Data: snapshot.State}, actor)
-	if err != nil {
-		httpx.Error(w, r, 500, "STATE_INVALID", "Unable to project this game state")
+	w.WriteHeader(204)
+}
+
+// Vote is POST /matches/{matchID}/abandon with {"vote": bool}.
+func (m *Module) Vote(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Vote bool `json:"vote"`
+	}
+	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	httpx.JSON(w, 200, map[string]any{"match_id": id, "revision": snapshot.Revision, "rules_version": match.RulesVersion, "view": view})
+	id := chi.URLParam(r, "matchID")
+	if !httpx.UUID(id) {
+		httpx.Error(w, r, 404, "NOT_FOUND", "Match not found")
+		return
+	}
+	if err := m.tx(r.Context(), func(q *store.Queries) error { return m.vote(r.Context(), q, id, httpx.Actor(r).ID, in.Vote) }); err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(204)
 }

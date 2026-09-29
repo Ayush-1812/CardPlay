@@ -14,6 +14,7 @@ import (
 
 	"cardplay/internal/config"
 	"cardplay/internal/httpx"
+	"cardplay/internal/matches"
 	"cardplay/internal/rooms"
 	"cardplay/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -451,6 +452,11 @@ func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, 403, "INVALID_CREDENTIALS", "Incorrect password")
 		return
 	}
+	// Deleting an account during a match abandons it (PRD P09).
+	if err = matches.AbandonForDeparture(r.Context(), q, actor.ID); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
 	if err = transferHostedRooms(r.Context(), q, actor.ID); err != nil {
 		httpx.DBError(w, r, err)
 		return
@@ -487,7 +493,7 @@ func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	steps := []func(context.Context, string) error{q.RevokeUserInvitations, q.DeleteFriendships, q.DeleteBlocks, q.DeleteAccountTokens, q.RevokeAllSessions}
+	steps := []func(context.Context, string) error{q.RevokeUserInvitations, q.DeleteFriendships, q.DeleteBlocks, q.DeleteMutes, q.DeleteAccountTokens, q.RevokeAllSessions}
 	for _, step := range steps {
 		if err = step(r.Context(), actor.ID); err != nil {
 			httpx.DBError(w, r, err)

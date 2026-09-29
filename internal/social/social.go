@@ -131,3 +131,43 @@ func (m *Module) Change(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(204)
 }
+
+// Mutes is GET /mutes: accounts whose chat the caller has hidden.
+func (m *Module) Mutes(w http.ResponseWriter, r *http.Request) {
+	items, err := store.New(m.DB).ListMutes(r.Context(), httpx.Actor(r).ID)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	httpx.JSON(w, 200, map[string]any{"items": items})
+}
+
+// Mute is PUT /mutes/{userID}: hide that account's chat for the caller only.
+// Unlike a block it leaves friendships and invitations alone (PRD P06).
+func (m *Module) Mute(w http.ResponseWriter, r *http.Request) {
+	other := chi.URLParam(r, "userID")
+	actor := httpx.Actor(r).ID
+	if !httpx.UUID(other) || other == actor {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Choose another user")
+		return
+	}
+	if _, err := store.New(m.DB).MuteUser(r.Context(), store.MuteUserParams{UserID: actor, MutedID: other}); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// Unmute is DELETE /mutes/{userID}.
+func (m *Module) Unmute(w http.ResponseWriter, r *http.Request) {
+	other := chi.URLParam(r, "userID")
+	if !httpx.UUID(other) {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Choose another user")
+		return
+	}
+	if err := store.New(m.DB).UnmuteUser(r.Context(), store.UnmuteUserParams{UserID: httpx.Actor(r).ID, MutedID: other}); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	w.WriteHeader(204)
+}

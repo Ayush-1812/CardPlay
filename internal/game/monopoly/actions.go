@@ -254,6 +254,9 @@ type RuleError struct {
 
 func (e *RuleError) Error() string { return e.Code + ": " + e.Message }
 
+// RejectionCode implements game.Rejection.
+func (e *RuleError) RejectionCode() string { return e.Code }
+
 func reject(code, format string, args ...any) *RuleError {
 	return &RuleError{Code: code, Message: fmt.Sprintf(format, args...)}
 }

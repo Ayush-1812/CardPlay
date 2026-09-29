@@ -67,6 +67,20 @@ type Game interface {
 	Apply(context.Context, State, string, Command) (Transition, error)
 	View(State, string) (View, error)
 }
+
+// Rejection is a rule-level refusal of a command. Apply returns one when the
+// command is illegal in the current state; the state is unchanged, and the
+// platform records the refusal so a retried command ID gets the same answer.
+type Rejection interface {
+	error
+	RejectionCode() string
+}
+
+// CardCatalog is implemented by games whose public card metadata clients need.
+type CardCatalog interface {
+	Cards() any
+}
+
 type Registry struct{ games map[string]Game }
 
 func NewRegistry(games ...Game) *Registry {
@@ -84,6 +98,16 @@ func NewRegistry(games ...Game) *Registry {
 func (r *Registry) Get(id, version string) (Game, bool) {
 	g, ok := r.games[id+":"+version]
 	return g, ok
+}
+
+// Find returns a registered game by ID, for version-independent metadata.
+func (r *Registry) Find(id string) (Game, bool) {
+	for _, g := range r.games {
+		if g.Descriptor().ID == id {
+			return g, true
+		}
+	}
+	return nil, false
 }
 func (r *Registry) Catalog() []Descriptor {
 	out := []Descriptor{}

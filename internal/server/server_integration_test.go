@@ -183,8 +183,8 @@ func TestRoomAndChatAuthorization(t *testing.T) {
 	if status, _ := do("POST", "/api/v1/rooms/"+room+"/matches", bobToken, nil); status != 403 {
 		t.Fatalf("nonhost start=%d", status)
 	}
-	if status, _ := do("POST", "/api/v1/rooms/"+room+"/matches", aliceToken, nil); status != 501 {
-		t.Fatalf("engine gate=%d", status)
+	if status, _ := do("POST", "/api/v1/rooms/"+room+"/matches", aliceToken, nil); status != 409 { // players not ready
+		t.Fatalf("start before ready=%d", status)
 	}
 	status, found := do("GET", "/api/v1/users?handle=bob"+suffix, aliceToken, nil)
 	if status != 200 || found["id"] != bob || found["email"] != nil || found["password_hash"] != nil {

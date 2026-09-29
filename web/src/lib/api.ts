@@ -21,7 +21,15 @@ export type Member = {
   seat: number;
   ready: boolean;
 };
-export type RoomView = { room: Room; members: Member[] };
+export type MatchSummary = {
+  id: string;
+  status: "playing" | "paused" | "finished" | "abandoned";
+  winner_id?: string;
+  end_reason?: string;
+  created_at: string;
+  finished_at?: string;
+};
+export type RoomView = { room: Room; members: Member[]; match?: MatchSummary };
 export type ChatMessage = {
   id: number;
   user_id: string;

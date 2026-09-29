@@ -125,3 +125,54 @@ func (m *Module) List(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, 200, map[string]any{"items": items})
 }
+
+// Report is POST /rooms/{roomID}/chat/{messageID}/report. Members may report
+// another member's recent message; reports are kept for moderator review
+// (PRD P06). A repeated report of the same message is accepted once.
+func (m *Module) Report(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	in.Reason = strings.TrimSpace(in.Reason)
+	if n := len([]rune(in.Reason)); n < 1 || n > 500 {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Give a reason of 1-500 characters")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "messageID"), 10, 64)
+	if err != nil || id < 1 {
+		httpx.Error(w, r, 404, "NOT_FOUND", "Message not found")
+		return
+	}
+	actor, room := httpx.Actor(r).ID, chi.URLParam(r, "roomID")
+	q := store.New(m.DB)
+	ok, err := q.IsMember(r.Context(), store.IsMemberParams{RoomID: room, UserID: actor})
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if !ok {
+		httpx.Error(w, r, 404, "NOT_FOUND", "Room not found")
+		return
+	}
+	author, err := q.ChatAuthor(r.Context(), store.ChatAuthorParams{ID: id, RoomID: room})
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.Error(w, r, 404, "NOT_FOUND", "Message not found")
+		return
+	}
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if author == actor {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "You cannot report your own message")
+		return
+	}
+	if _, err := q.ReportChat(r.Context(), store.ReportChatParams{MessageID: id, ReporterID: actor, Reason: in.Reason}); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	w.WriteHeader(204)
+}

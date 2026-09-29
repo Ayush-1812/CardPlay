@@ -78,15 +78,18 @@ type LoginDevice struct {
 }
 
 type Match struct {
-	ID           string     `json:"id"`
-	RoomID       string     `json:"room_id"`
-	GameID       string     `json:"game_id"`
-	RulesVersion string     `json:"rules_version"`
-	Status       string     `json:"status"`
-	Revision     int64      `json:"revision"`
-	WinnerID     *string    `json:"winner_id"`
-	CreatedAt    time.Time  `json:"created_at"`
-	FinishedAt   *time.Time `json:"finished_at"`
+	ID           string      `json:"id"`
+	RoomID       string      `json:"room_id"`
+	GameID       string      `json:"game_id"`
+	RulesVersion string      `json:"rules_version"`
+	Status       string      `json:"status"`
+	Revision     int64       `json:"revision"`
+	WinnerID     *string     `json:"winner_id"`
+	CreatedAt    time.Time   `json:"created_at"`
+	FinishedAt   *time.Time  `json:"finished_at"`
+	Version      int64       `json:"version"`
+	EndReason    pgtype.Text `json:"end_reason"`
+	EndedBy      *string     `json:"ended_by"`
 }
 
 type MatchParticipant struct {
@@ -95,6 +98,8 @@ type MatchParticipant struct {
 	Seat                 int32      `json:"seat"`
 	ControllerGeneration int64      `json:"controller_generation"`
 	DisconnectedAt       *time.Time `json:"disconnected_at"`
+	LastSeenAt           time.Time  `json:"last_seen_at"`
+	AbandonVote          bool       `json:"abandon_vote"`
 }
 
 type Outbox struct {
@@ -165,5 +170,11 @@ type User struct {
 type UserBlock struct {
 	UserID    string    `json:"user_id"`
 	BlockedID string    `json:"blocked_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type UserMute struct {
+	UserID    string    `json:"user_id"`
+	MutedID   string    `json:"muted_id"`
 	CreatedAt time.Time `json:"created_at"`
 }
