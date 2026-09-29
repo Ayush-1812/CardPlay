@@ -133,16 +133,18 @@ type Session struct {
 	UserID    string    `json:"user_id"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"`
 }
 
 type User struct {
-	ID            string    `json:"id"`
-	Email         string    `json:"email"`
-	Handle        string    `json:"handle"`
-	DisplayName   string    `json:"display_name"`
-	PasswordHash  string    `json:"password_hash"`
-	EmailVerified bool      `json:"email_verified"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            string     `json:"id"`
+	Email         string     `json:"email"`
+	Handle        string     `json:"handle"`
+	DisplayName   string     `json:"display_name"`
+	PasswordHash  string     `json:"password_hash"`
+	EmailVerified bool       `json:"email_verified"`
+	CreatedAt     time.Time  `json:"created_at"`
+	DeletedAt     *time.Time `json:"deleted_at"`
 }
 
 type UserBlock struct {

@@ -10,15 +10,15 @@ import (
 )
 
 type Config struct {
-	Environment, Address, DatabaseURL, Origin, SMTPAddress, MailFrom string
-	SessionTTL                                                       time.Duration
-	SecureCookie                                                     bool
+	Environment, Address, DatabaseURL, Origin, SMTPAddress, MailFrom, SMTPUsername, SMTPPassword string
+	SessionTTL                                                                                   time.Duration
+	SecureCookie                                                                                 bool
 }
 
 func Load() (Config, error) { return Parse(os.Getenv) }
 
 func Parse(get func(string) string) (Config, error) {
-	c := Config{Environment: get("APP_ENV"), Address: get("HTTP_ADDR"), DatabaseURL: get("DATABASE_URL"), Origin: get("APP_ORIGIN"), SMTPAddress: get("SMTP_ADDR"), MailFrom: get("MAIL_FROM"), SessionTTL: 7 * 24 * time.Hour}
+	c := Config{Environment: get("APP_ENV"), Address: get("HTTP_ADDR"), DatabaseURL: get("DATABASE_URL"), Origin: get("APP_ORIGIN"), SMTPAddress: get("SMTP_ADDR"), MailFrom: get("MAIL_FROM"), SMTPUsername: get("SMTP_USERNAME"), SMTPPassword: get("SMTP_PASSWORD"), SessionTTL: 7 * 24 * time.Hour}
 	if c.Environment == "" {
 		c.Environment = "development"
 	}
@@ -44,6 +44,9 @@ func Parse(get func(string) string) (Config, error) {
 		if _, _, err := net.SplitHostPort(c.SMTPAddress); err != nil {
 			return c, errors.New("SMTP_ADDR must be host:port")
 		}
+		if (c.SMTPUsername == "") != (c.SMTPPassword == "") {
+			return c, errors.New("SMTP_USERNAME and SMTP_PASSWORD must be set together")
+		}
 		if !strings.Contains(c.MailFrom, "@") || strings.ContainsAny(c.MailFrom, "\r\n") {
 			return c, errors.New("MAIL_FROM must be an email address")
 		}
@@ -55,8 +58,8 @@ func Parse(get func(string) string) (Config, error) {
 		if u.Query().Get("sslmode") != "verify-full" {
 			return c, errors.New("production requires DATABASE_URL sslmode=verify-full")
 		}
-		if c.SMTPAddress == "" {
-			return c, errors.New("production requires SMTP_ADDR")
+		if c.SMTPAddress == "" || c.SMTPUsername == "" {
+			return c, errors.New("production requires SMTP_ADDR and SMTP credentials")
 		}
 	}
 	return c, nil

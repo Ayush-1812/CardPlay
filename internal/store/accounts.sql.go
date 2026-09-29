@@ -10,6 +10,57 @@ import (
 	"time"
 )
 
+const anonymizeUser = `-- name: AnonymizeUser :exec
+UPDATE users SET email='deleted+'||id::text||'@cardplay.invalid',handle='deleted_'||substr(replace(id::text,'-',''),1,16),display_name='Deleted player',password_hash=$2,email_verified=false,deleted_at=now() WHERE id=$1
+`
+
+type AnonymizeUserParams struct {
+	ID           string `json:"id"`
+	PasswordHash string `json:"password_hash"`
+}
+
+func (q *Queries) AnonymizeUser(ctx context.Context, arg AnonymizeUserParams) error {
+	_, err := q.db.Exec(ctx, anonymizeUser, arg.ID, arg.PasswordHash)
+	return err
+}
+
+const changeDisplayName = `-- name: ChangeDisplayName :exec
+UPDATE users SET display_name=$2 WHERE id=$1 AND deleted_at IS NULL
+`
+
+type ChangeDisplayNameParams struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+}
+
+func (q *Queries) ChangeDisplayName(ctx context.Context, arg ChangeDisplayNameParams) error {
+	_, err := q.db.Exec(ctx, changeDisplayName, arg.ID, arg.DisplayName)
+	return err
+}
+
+const changePassword = `-- name: ChangePassword :exec
+UPDATE users SET password_hash=$2 WHERE id=$1
+`
+
+type ChangePasswordParams struct {
+	ID           string `json:"id"`
+	PasswordHash string `json:"password_hash"`
+}
+
+func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) error {
+	_, err := q.db.Exec(ctx, changePassword, arg.ID, arg.PasswordHash)
+	return err
+}
+
+const closeHostedRooms = `-- name: CloseHostedRooms :exec
+UPDATE rooms SET status='closed',revision=revision+1 WHERE host_id=$1 AND status='waiting'
+`
+
+func (q *Queries) CloseHostedRooms(ctx context.Context, hostID string) error {
+	_, err := q.db.Exec(ctx, closeHostedRooms, hostID)
+	return err
+}
+
 const consumeAccountToken = `-- name: ConsumeAccountToken :one
 DELETE FROM account_tokens WHERE token_hash=$1 AND purpose=$2 AND expires_at>now() RETURNING user_id
 `
@@ -63,7 +114,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users(email,handle,display_name,password_hash,email_verified) VALUES ($1,$2,$3,$4,$5) RETURNING id, email, handle, display_name, password_hash, email_verified, created_at
+INSERT INTO users(email,handle,display_name,password_hash,email_verified) VALUES ($1,$2,$3,$4,$5) RETURNING id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at
 `
 
 type CreateUserParams struct {
@@ -91,8 +142,27 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.PasswordHash,
 		&i.EmailVerified,
 		&i.CreatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const deleteAccountTokens = `-- name: DeleteAccountTokens :exec
+DELETE FROM account_tokens WHERE user_id=$1
+`
+
+func (q *Queries) DeleteAccountTokens(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteAccountTokens, userID)
+	return err
+}
+
+const deleteBlocks = `-- name: DeleteBlocks :exec
+DELETE FROM user_blocks WHERE user_id=$1 OR blocked_id=$1
+`
+
+func (q *Queries) DeleteBlocks(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteBlocks, userID)
+	return err
 }
 
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
@@ -101,6 +171,29 @@ DELETE FROM sessions WHERE expires_at<=now()
 
 func (q *Queries) DeleteExpiredSessions(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteExpiredSessions)
+	return err
+}
+
+const deleteFriendships = `-- name: DeleteFriendships :exec
+DELETE FROM friendships WHERE requester_id=$1 OR recipient_id=$1
+`
+
+func (q *Queries) DeleteFriendships(ctx context.Context, requesterID string) error {
+	_, err := q.db.Exec(ctx, deleteFriendships, requesterID)
+	return err
+}
+
+const deletePurposeTokens = `-- name: DeletePurposeTokens :exec
+DELETE FROM account_tokens WHERE user_id=$1 AND purpose=$2
+`
+
+type DeletePurposeTokensParams struct {
+	UserID  string `json:"user_id"`
+	Purpose string `json:"purpose"`
+}
+
+func (q *Queries) DeletePurposeTokens(ctx context.Context, arg DeletePurposeTokensParams) error {
+	_, err := q.db.Exec(ctx, deletePurposeTokens, arg.UserID, arg.Purpose)
 	return err
 }
 
@@ -113,9 +206,83 @@ func (q *Queries) DeleteSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
+const listSessions = `-- name: ListSessions :many
+SELECT id,created_at,expires_at FROM sessions WHERE user_id=$1 AND expires_at>now() ORDER BY created_at DESC LIMIT 50
+`
+
+type ListSessionsRow struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (q *Queries) ListSessions(ctx context.Context, userID string) ([]ListSessionsRow, error) {
+	rows, err := q.db.Query(ctx, listSessions, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSessionsRow{}
+	for rows.Next() {
+		var i ListSessionsRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt, &i.ExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const removeFromWaitingRooms = `-- name: RemoveFromWaitingRooms :exec
+DELETE FROM room_members WHERE user_id=$1 AND room_id IN (SELECT id FROM rooms WHERE status='waiting')
+`
+
+func (q *Queries) RemoveFromWaitingRooms(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, removeFromWaitingRooms, userID)
+	return err
+}
+
+const revokeAllSessions = `-- name: RevokeAllSessions :exec
+DELETE FROM sessions WHERE user_id=$1
+`
+
+func (q *Queries) RevokeAllSessions(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, revokeAllSessions, userID)
+	return err
+}
+
+const revokeSession = `-- name: RevokeSession :execrows
+DELETE FROM sessions WHERE id=$1 AND user_id=$2
+`
+
+type RevokeSessionParams struct {
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeSession, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeUserInvitations = `-- name: RevokeUserInvitations :exec
+UPDATE invitations SET revoked_at=now() WHERE (inviter_id=$1 OR target_id=$1) AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeUserInvitations(ctx context.Context, inviterID string) error {
+	_, err := q.db.Exec(ctx, revokeUserInvitations, inviterID)
+	return err
+}
+
 const sessionUser = `-- name: SessionUser :one
 SELECT u.id,u.handle,u.display_name,u.email,u.email_verified,s.expires_at
-FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()
+FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.deleted_at IS NULL
 `
 
 type SessionUserRow struct {
@@ -142,7 +309,7 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash string) (SessionUse
 }
 
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, handle, display_name, password_hash, email_verified, created_at FROM users WHERE email=$1
+SELECT id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at FROM users WHERE email=$1 AND deleted_at IS NULL
 `
 
 func (q *Queries) UserByEmail(ctx context.Context, email string) (User, error) {
@@ -156,6 +323,7 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (User, error) {
 		&i.PasswordHash,
 		&i.EmailVerified,
 		&i.CreatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

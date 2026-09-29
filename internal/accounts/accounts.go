@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/mail"
-	"net/smtp"
 	"regexp"
 	"strings"
 	"time"
@@ -15,6 +14,8 @@ import (
 	"cardplay/internal/config"
 	"cardplay/internal/httpx"
 	"cardplay/internal/store"
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/argon2"
 )
@@ -98,7 +99,7 @@ func (m *Module) Register(w http.ResponseWriter, r *http.Request) {
 	// Delivery occurs before commit: failure leaves no unusable account. The user
 	// confirms manually after receiving the token; registration never auto-verifies.
 	body := fmt.Sprintf("To: %s\r\nFrom: %s\r\nSubject: Verify your CardPlay account\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nOpen %s and enter this verification token:\r\n%s\r\nIt expires in one hour.\r\n", in.Email, m.Config.MailFrom, m.Config.Origin, token)
-	if err = sendMail(r.Context(), m.Config.SMTPAddress, m.Config.MailFrom, in.Email, body); err != nil {
+	if err = m.sendMail(r.Context(), in.Email, body); err != nil {
 		httpx.Error(w, r, 503, "MAIL_UNAVAILABLE", "Verification mail could not be delivered; try again")
 		return
 	}
@@ -108,9 +109,8 @@ func (m *Module) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, 201, map[string]any{"id": user.ID, "verification_required": true})
 }
-func sendMail(ctx context.Context, address, from, to, body string) error {
-	// Local Mailpit / trusted SMTP relay. Timeout enforced by the socket.
-	return sendSMTP(ctx, address, from, to, body)
+func (m *Module) sendMail(ctx context.Context, to, body string) error {
+	return sendSMTP(ctx, m.Config.SMTPAddress, m.Config.MailFrom, to, body, m.Config.SMTPUsername, m.Config.SMTPPassword, m.Config.Environment == "production")
 }
 func (m *Module) Verify(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -184,5 +184,189 @@ func (m *Module) Me(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, 200, map[string]any{"id": a.ID, "handle": a.Handle, "display_name": a.DisplayName, "email": a.Email, "email_verified": a.Verified})
 }
 
-// Compile-time marker ensures SMTP remains an explicit delivery adapter.
-var _ *smtp.Client
+func (m *Module) issueAccountToken(w http.ResponseWriter, r *http.Request, purpose string) {
+	var in struct {
+		Email string `json:"email"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(in.Email))
+	if len(email) > 254 {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Invalid email")
+		return
+	}
+	if m.Config.SMTPAddress == "" {
+		httpx.Error(w, r, 503, "MAIL_UNAVAILABLE", "Email delivery is not configured")
+		return
+	}
+	u, err := store.New(m.DB).UserByEmail(r.Context(), email)
+	if err == pgx.ErrNoRows || (err == nil && purpose == "verify_email" && u.EmailVerified) {
+		w.WriteHeader(202)
+		return
+	}
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	tx, err := m.DB.Begin(r.Context())
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	q := store.New(tx)
+	if err = q.DeletePurposeTokens(r.Context(), store.DeletePurposeTokensParams{UserID: u.ID, Purpose: purpose}); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	token := httpx.Token()
+	if err = q.CreateAccountToken(r.Context(), store.CreateAccountTokenParams{TokenHash: httpx.Hash(token), UserID: u.ID, Purpose: purpose, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	subject := "Verify your CardPlay account"
+	if purpose == "reset_password" {
+		subject = "Reset your CardPlay password"
+	}
+	body := fmt.Sprintf("To: %s\r\nFrom: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nOpen %s and enter this token:\r\n%s\r\nIt expires in one hour.\r\n", email, m.Config.MailFrom, subject, m.Config.Origin, token)
+	if err = m.sendMail(r.Context(), email, body); err != nil {
+		httpx.Error(w, r, 503, "MAIL_UNAVAILABLE", "Email could not be delivered; try again")
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	w.WriteHeader(202)
+}
+
+func (m *Module) ResendVerification(w http.ResponseWriter, r *http.Request) {
+	m.issueAccountToken(w, r, "verify_email")
+}
+func (m *Module) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	m.issueAccountToken(w, r, "reset_password")
+}
+
+func (m *Module) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if len(in.Token) != 64 || len(in.Password) < 12 || len(in.Password) > 128 {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Use a valid token and a 12-128 byte password")
+		return
+	}
+	tx, err := m.DB.Begin(r.Context())
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	q := store.New(tx)
+	id, err := q.ConsumeAccountToken(r.Context(), store.ConsumeAccountTokenParams{TokenHash: httpx.Hash(in.Token), Purpose: "reset_password"})
+	if err != nil {
+		httpx.Error(w, r, 400, "TOKEN_INVALID", "Token is invalid or expired")
+		return
+	}
+	if err = q.ChangePassword(r.Context(), store.ChangePasswordParams{ID: id, PasswordHash: PasswordHash(in.Password)}); err == nil {
+		err = q.RevokeAllSessions(r.Context(), id)
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	httpx.JSON(w, 200, map[string]bool{"password_reset": true})
+}
+
+func (m *Module) Sessions(w http.ResponseWriter, r *http.Request) {
+	items, err := store.New(m.DB).ListSessions(r.Context(), httpx.Actor(r).ID)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	httpx.JSON(w, 200, map[string]any{"items": items})
+}
+func (m *Module) RevokeSession(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "sessionID")
+	if !httpx.UUID(id) {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Invalid session ID")
+		return
+	}
+	n, err := store.New(m.DB).RevokeSession(r.Context(), store.RevokeSessionParams{ID: id, UserID: httpx.Actor(r).ID})
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if n == 0 {
+		httpx.Error(w, r, 404, "NOT_FOUND", "Session not found")
+		return
+	}
+	w.WriteHeader(204)
+}
+func (m *Module) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		DisplayName string `json:"display_name"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	in.DisplayName = strings.TrimSpace(in.DisplayName)
+	if n := len([]rune(in.DisplayName)); n < 1 || n > 60 {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Display name must be 1-60 characters")
+		return
+	}
+	if err := store.New(m.DB).ChangeDisplayName(r.Context(), store.ChangeDisplayNameParams{ID: httpx.Actor(r).ID, DisplayName: in.DisplayName}); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	httpx.JSON(w, 200, map[string]string{"display_name": in.DisplayName})
+}
+func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Password string `json:"password"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	actor := httpx.Actor(r)
+	u, err := store.New(m.DB).UserByEmail(r.Context(), actor.Email)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if !PasswordMatches(u.PasswordHash, in.Password) {
+		httpx.Error(w, r, 403, "INVALID_CREDENTIALS", "Incorrect password")
+		return
+	}
+	tx, err := m.DB.Begin(r.Context())
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	q := store.New(tx)
+	steps := []func(context.Context, string) error{q.CloseHostedRooms, q.RemoveFromWaitingRooms, q.RevokeUserInvitations, q.DeleteFriendships, q.DeleteBlocks, q.DeleteAccountTokens, q.RevokeAllSessions}
+	for _, step := range steps {
+		if err = step(r.Context(), actor.ID); err != nil {
+			httpx.DBError(w, r, err)
+			return
+		}
+	}
+	err = q.AnonymizeUser(r.Context(), store.AnonymizeUserParams{ID: actor.ID, PasswordHash: PasswordHash(httpx.Token())})
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: CookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: m.Config.SecureCookie, SameSite: http.SameSiteLaxMode})
+	w.WriteHeader(204)
+}

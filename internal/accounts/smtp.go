@@ -3,12 +3,13 @@ package accounts
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/smtp"
 	"time"
 )
 
-func sendSMTP(ctx context.Context, address, from, to, body string) error {
+func sendSMTP(ctx context.Context, address, from, to, body, username, password string, requireTLS bool) error {
 	d := net.Dialer{Timeout: 5 * time.Second}
 	conn, err := d.DialContext(ctx, "tcp", address)
 	if err != nil {
@@ -24,6 +25,13 @@ func sendSMTP(ctx context.Context, address, from, to, body string) error {
 	defer func() { _ = c.Close() }()
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		if err = c.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+			return err
+		}
+	} else if requireTLS {
+		return errors.New("SMTP server does not support STARTTLS")
+	}
+	if username != "" {
+		if err = c.Auth(smtp.PlainAuth("", username, password, host)); err != nil {
 			return err
 		}
 	}

@@ -25,6 +25,18 @@ func main() {
 	}
 }
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "health" {
+		client := http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get("http://127.0.0.1:8080/readyz")
+		if err != nil {
+			return errors.New("API not ready")
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return errors.New("API not ready")
+		}
+		return nil
+	}
 	c, err := config.Load()
 	if err != nil {
 		return err

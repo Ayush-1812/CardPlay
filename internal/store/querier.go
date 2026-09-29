@@ -14,18 +14,26 @@ type Querier interface {
 	AcceptFriend(ctx context.Context, arg AcceptFriendParams) (int64, error)
 	AcceptInvitation(ctx context.Context, id string) error
 	AddMember(ctx context.Context, arg AddMemberParams) error
+	AnonymizeUser(ctx context.Context, arg AnonymizeUserParams) error
 	AreFriends(ctx context.Context, arg AreFriendsParams) (bool, error)
 	BlockUser(ctx context.Context, arg BlockUserParams) error
 	BumpRoom(ctx context.Context, id string) error
+	ChangeDisplayName(ctx context.Context, arg ChangeDisplayNameParams) error
+	ChangePassword(ctx context.Context, arg ChangePasswordParams) error
 	ChatPage(ctx context.Context, arg ChatPageParams) ([]ChatPageRow, error)
 	ChatRecentCount(ctx context.Context, userID string) (int64, error)
+	CloseHostedRooms(ctx context.Context, hostID string) error
 	ConsumeAccountToken(ctx context.Context, arg ConsumeAccountTokenParams) (string, error)
 	CreateAccountToken(ctx context.Context, arg CreateAccountTokenParams) error
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error)
 	CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteAccountTokens(ctx context.Context, userID string) error
+	DeleteBlocks(ctx context.Context, userID string) error
 	DeleteExpiredSessions(ctx context.Context) error
+	DeleteFriendships(ctx context.Context, requesterID string) error
+	DeletePurposeTokens(ctx context.Context, arg DeletePurposeTokensParams) error
 	DeleteSession(ctx context.Context, tokenHash string) error
 	DeliverOutbox(ctx context.Context, id int64) error
 	Enqueue(ctx context.Context, arg EnqueueParams) error
@@ -38,6 +46,7 @@ type Querier interface {
 	IsParticipant(ctx context.Context, arg IsParticipantParams) (bool, error)
 	LatestSnapshot(ctx context.Context, matchID string) (GameSnapshot, error)
 	ListFriendships(ctx context.Context, requesterID string) ([]ListFriendshipsRow, error)
+	ListSessions(ctx context.Context, userID string) ([]ListSessionsRow, error)
 	LockRoom(ctx context.Context, id string) (Room, error)
 	LockSocialPair(ctx context.Context, pair string) error
 	Match(ctx context.Context, id string) (Match, error)
@@ -48,9 +57,13 @@ type Querier interface {
 	PurgeChat(ctx context.Context) error
 	PurgeOutbox(ctx context.Context) error
 	RemoveFriend(ctx context.Context, arg RemoveFriendParams) error
+	RemoveFromWaitingRooms(ctx context.Context, userID string) error
 	RequestFriend(ctx context.Context, arg RequestFriendParams) error
 	ResetReady(ctx context.Context, roomID string) error
+	RevokeAllSessions(ctx context.Context, userID string) error
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
+	RevokeSession(ctx context.Context, arg RevokeSessionParams) (int64, error)
+	RevokeUserInvitations(ctx context.Context, inviterID string) error
 	Room(ctx context.Context, id string) (Room, error)
 	SessionUser(ctx context.Context, tokenHash string) (SessionUserRow, error)
 	SetReady(ctx context.Context, arg SetReadyParams) error
