@@ -4,7 +4,6 @@ import (
 	"cardplay/internal/httpx"
 	"cardplay/internal/store"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -36,8 +35,8 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	in.Name = strings.TrimSpace(in.Name)
-	if n := len([]rune(in.Name)); n < 1 || n > 80 || in.Capacity < 2 || in.Capacity > 5 {
+	var ok bool
+	if in.Name, ok = httpx.CleanText(in.Name, 80); !ok || in.Capacity < 2 || in.Capacity > 5 {
 		httpx.Error(w, r, 400, "INVALID_REQUEST", "Name is required; capacity must be 2-5")
 		return
 	}

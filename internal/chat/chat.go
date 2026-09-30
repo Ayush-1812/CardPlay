@@ -2,6 +2,7 @@ package chat
 
 import (
 	"cardplay/internal/httpx"
+	"cardplay/internal/obs"
 	"cardplay/internal/store"
 	"context"
 	"errors"
@@ -11,7 +12,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"strings"
 )
 
 type Module struct{ DB *pgxpool.Pool }
@@ -29,9 +29,11 @@ type Input struct {
 }
 
 func (m *Module) Send(ctx context.Context, room, actor string, in Input) (store.RoomChat, error) {
-	in.Body = strings.TrimSpace(in.Body)
-	if !httpx.UUID(in.ClientID) || len([]rune(in.Body)) < 1 || len([]rune(in.Body)) > 500 {
-		return store.RoomChat{}, &Error{"INVALID_REQUEST", 400, "Chat needs a UUID client_id and 1-500 characters"}
+	var valid bool
+	// Plain text only: control characters and direction overrides could hide
+	// or reorder what other players read (PRD P06).
+	if in.Body, valid = httpx.CleanText(in.Body, 500); !valid || !httpx.UUID(in.ClientID) {
+		return store.RoomChat{}, &Error{"INVALID_REQUEST", 400, "Chat needs a UUID client_id and 1-500 characters of plain text"}
 	}
 	tx, err := m.DB.Begin(ctx)
 	if err != nil {
@@ -65,6 +67,7 @@ func (m *Module) Send(ctx context.Context, room, actor string, in Input) (store.
 		return store.RoomChat{}, err
 	}
 	if count >= 5 {
+		obs.RateLimited.Inc("chat")
 		return store.RoomChat{}, &Error{"RATE_LIMITED", 429, "Wait before sending another message"}
 	}
 	msg, err := q.InsertChat(ctx, store.InsertChatParams{RoomID: room, UserID: actor, ClientID: in.ClientID, Body: in.Body})
@@ -73,6 +76,9 @@ func (m *Module) Send(ctx context.Context, room, actor string, in Input) (store.
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
+	}
+	if err == nil {
+		obs.ChatMessages.Inc()
 	}
 	return msg, err
 }
@@ -136,8 +142,8 @@ func (m *Module) Report(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	in.Reason = strings.TrimSpace(in.Reason)
-	if n := len([]rune(in.Reason)); n < 1 || n > 500 {
+	var valid bool
+	if in.Reason, valid = httpx.CleanText(in.Reason, 500); !valid {
 		httpx.Error(w, r, 400, "INVALID_REQUEST", "Give a reason of 1-500 characters")
 		return
 	}

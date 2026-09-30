@@ -40,17 +40,18 @@ export const COLOR_NAMES: Record<Color, string> = {
   utility: "Utility",
 };
 
+// Property band colors: distinct hues that read on cream card paper.
 export const COLOR_CSS: Record<Color, string> = {
-  brown: "#8a5a3c",
-  light_blue: "#9fd8f0",
-  pink: "#e27bb8",
-  orange: "#f09a3e",
-  red: "#e0493f",
-  yellow: "#f2d64b",
-  green: "#3fa55b",
-  dark_blue: "#3452b4",
-  railroad: "#2b2b2b",
-  utility: "#c9d6c4",
+  brown: "#6b4a30",
+  light_blue: "#6db5d3",
+  pink: "#d768a0",
+  orange: "#df863e",
+  red: "#c63939",
+  yellow: "#e4b53a",
+  green: "#2e8d5c",
+  dark_blue: "#1d3b6f",
+  railroad: "#1b1b1b",
+  utility: "#6a717d",
 };
 
 export const SET_SIZE: Record<Color, number> = {
@@ -64,6 +65,89 @@ export const SET_SIZE: Record<Color, number> = {
   dark_blue: 2,
   railroad: 4,
   utility: 2,
+};
+
+// Rent in M for 1..size cards, from the verified card faces (rule spec).
+export const RENT_LADDER: Record<Color, number[]> = {
+  brown: [1, 2],
+  light_blue: [1, 2, 3],
+  pink: [1, 2, 4],
+  orange: [1, 3, 5],
+  red: [2, 3, 6],
+  yellow: [2, 4, 6],
+  green: [2, 4, 7],
+  dark_blue: [3, 8],
+  railroad: [1, 2, 3, 4],
+  utility: [1, 2],
+};
+
+// Text color on each property band, chosen for contrast.
+export const BAND_TEXT: Record<Color, string> = {
+  brown: "#fff",
+  light_blue: "#0d2330",
+  pink: "#fff",
+  orange: "#fff",
+  red: "#fff",
+  yellow: "#33260a",
+  green: "#fff",
+  dark_blue: "#fff",
+  railroad: "#fff",
+  utility: "#fff",
+};
+
+// Money card face colors by denomination.
+export const MONEY_COLORS: Record<number, string> = {
+  1: "#b3b3ad",
+  2: "#d3bf72",
+  3: "#68ad67",
+  4: "#6a98cf",
+  5: "#b27848",
+  10: "#9f5a2b",
+};
+
+// Title, one-line effect and accent color for each action card face.
+export const ACTION_FACE: Record<
+  string,
+  { title: string; effect: string; accent: string }
+> = {
+  pass_go: { title: "Pass Go", effect: "Draw 2 cards", accent: "#86d2fb" },
+  sly_deal: {
+    title: "Sly Deal",
+    effect: "Steal 1 property",
+    accent: "#5cdcd4",
+  },
+  forced_deal: {
+    title: "Forced Deal",
+    effect: "Swap properties",
+    accent: "#5cdcd4",
+  },
+  deal_breaker: {
+    title: "Deal Breaker",
+    effect: "Steal a full set",
+    accent: "#fb78dc",
+  },
+  debt_collector: {
+    title: "Debt Collector",
+    effect: "One player pays 5M",
+    accent: "#78d886",
+  },
+  birthday: {
+    title: "It's My Birthday",
+    effect: "Everyone pays 2M",
+    accent: "#78d886",
+  },
+  just_say_no: {
+    title: "Just Say No!",
+    effect: "Block an action",
+    accent: "#fb8787",
+  },
+  double_the_rent: {
+    title: "Double the Rent",
+    effect: "2× rent",
+    accent: "#fbad6e",
+  },
+  house: { title: "House", effect: "+3M rent", accent: "#78d886" },
+  hotel: { title: "Hotel", effect: "+4M rent", accent: "#fb7878" },
 };
 
 export type CardInfo = {

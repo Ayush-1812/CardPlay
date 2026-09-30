@@ -9,6 +9,7 @@ Use two separate browser profiles at http://localhost:3000. The seeded Alice and
 5. On a phone-size viewport (360 CSS pixels or wider), check login, friends, invite joining, room controls and error messages. Disconnect and reconnect the network in a room; the socket status should recover and the room view should refresh without duplicate chat messages.
 
 6. With two or three players ready, the host starts a match. Each browser shows its own hand, and other players' hand counts only. Take turns (bank a card, play a property, end the turn), then refresh a browser: it returns to the same seat and hand. Open the room in a second tab: the first tab says the match is open elsewhere, and **Play here instead** takes it back. Close one player's browser: the match pauses for everyone and resumes when they return. Leave the match: it ends for everyone with no winner, and the room returns to the lobby.
-7. During a match, chat still works. Report or mute another player's message; muted players' messages disappear for you. With the chat scrolled out of view, a new-message badge appears.
+7. During a match, open **Chat** from the table's top bar. Report or mute another player's message; muted players' messages disappear for you. While the chat drawer is closed, the **Chat** button shows a count of new messages.
+8. Check the table at phone width (360–390 CSS px): the opponent chips and board scroll sideways, and your hand stays docked at the bottom with **End turn** on your turn. At desktop width the hand fans out and a card lifts when you point at it.
 
-The full lifecycle, including server restarts, is in [09-multiplayer-and-recovery.md](09-multiplayer-and-recovery.md). An automated three-browser run is in `scripts/e2e`.
+The full lifecycle, including server restarts, is in [09-multiplayer-and-recovery.md](09-multiplayer-and-recovery.md). The automated Playwright browser suite is in `scripts/e2e`.

@@ -83,4 +83,4 @@ Game events never put hand contents in chat.
   - Tab takeover, pause and resume on disconnect, and silent-drop detection.
   - A full server restart, abandon voting, leave, a winning finish, 24-hour expiry, chat report and mute, and account deletion mid-match.
 - `internal/server/realtime_integration_test.go`: notifications reach sockets on a second API instance.
-- A browser test drove three real browser sessions (Alice, Bob, Carol) through the web client. It covers start, six live turns and chat with the unread badge. It also covers refresh, a second tab taking and returning a seat, and network loss and recovery. It then kills and restarts the API mid-match, and finishes with report, mute and leave. It checked every WebSocket frame for hidden-card leaks.
+- The Playwright suite in `scripts/e2e` drives real browser sessions through start, chat with the unread badge, refresh, a second tab taking and returning a seat, a dropped connection and recovery, an API kill and restart mid-match, a complete match to a winner, report, mute and leave. It checks every WebSocket frame for hidden-card leaks.

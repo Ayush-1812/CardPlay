@@ -6,7 +6,9 @@ All endpoints use JSON unless the response is `204`. Base path: `/api/v1`. A suc
 
 | Method / path | Body or query | Access | Response / status |
 |---|---|---|---|
-| `GET /healthz`, `GET /readyz` | none | Public | `200`; readiness queries PostgreSQL; `503 NOT_READY` on failure |
+| `GET /healthz` | none | Public | `200` while the process serves HTTP (liveness) |
+| `GET /readyz` | none | Public | `200 {status, checks}` when the database answers, all migrations are applied with matching checksums and the live-update listener is active; otherwise `503` naming the failing check ([operations](10-operations.md)) |
+| `POST /api/v1/client-errors` | `kind`, `message`, `page`, `stack`, `digest` (all optional, 16 KB max) | Public, same-origin, 30/min | `204`; logged as `client_error` with bounded fields, query strings stripped |
 | `GET /api/v1/games` | none | Public | Game catalog with `playable`; Monopoly Deal is playable, Cambio is not registered |
 | `GET /api/v1/games/{gameID}/cards` | none | Public | Public card manifest (IDs, names, values, colors); no game state |
 | `POST /api/v1/auth/register` | `email`, `handle`, `display_name`, `password` | Public | `201 {verification_required}` pending verification; email token sent through configured SMTP. An already-registered email gets the identical response and the owner is emailed a notice instead, so registration never reveals accounts. A taken handle (public) returns `409 CONFLICT`. `503 MAIL_UNAVAILABLE` if delivery unavailable |

@@ -1,13 +1,24 @@
 "use client";
 
-import { useState } from "react";
+// The live Monopoly Deal table: a felt surface with an opponent rail, the
+// selected opponent's board, deck and center pile, and the player's gold
+// platter with their board and fanned hand. Below 1024px the same pieces
+// stack vertically. The server decides every result; this only builds
+// typed intents and shows the player's own projection.
+
+import {
+  ReactNode,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   actionName,
   CardInfo,
   cardName,
   Cards,
   Color,
-  COLOR_CSS,
   COLOR_NAMES,
   COLORS,
   describeEvent,
@@ -16,6 +27,9 @@ import {
   PublicPlayer,
   SET_SIZE,
 } from "../lib/game";
+import { Hand } from "./table/hand";
+import { Board, CenterPile, DeckPile } from "./table/piles";
+import { PlayingCard } from "./table/playing-card";
 
 type Command = (kind: string, payload: object) => Promise<boolean>;
 
@@ -27,135 +41,30 @@ type Props = {
   onCommand: Command;
   onLeave: () => void;
   onVote: (vote: boolean) => void;
+  roomName?: string;
+  connection?: string;
+  // Rendered inside the table: alerts, notices, the tab-takeover banner.
+  alerts?: ReactNode;
+  // Room chat, shown in a drawer; unread counts messages not yet seen.
+  chat?: ReactNode;
+  unread?: number;
 };
 
-function Chip({ cards, id }: { cards: Cards; id: string }) {
-  const c = cards[id];
-  const colors = c?.colors ?? [];
-  const band =
-    c?.kind === "rainbow_wild"
-      ? "linear-gradient(90deg,#e0493f,#f2d64b,#3fa55b,#3452b4)"
-      : colors.length === 2
-        ? `linear-gradient(90deg,${COLOR_CSS[colors[0]]} 50%,${COLOR_CSS[colors[1]]} 50%)`
-        : colors.length === 1
-          ? COLOR_CSS[colors[0]]
-          : "var(--line)";
-  return (
-    <span
-      className="card-chip"
-      title={c ? `${cardName(cards, id)}, ${c.value}M` : id}
-    >
-      <span
-        className="card-band"
-        style={{ background: band }}
-        aria-hidden="true"
-      />
-      <span>{cardName(cards, id)}</span>
-      {c && c.kind !== "rainbow_wild" && <small>{c.value}M</small>}
-    </span>
+const wideQuery = "(min-width: 1024px)";
+function useWide() {
+  return useSyncExternalStore(
+    (notify) => {
+      const mq = window.matchMedia(wideQuery);
+      mq.addEventListener("change", notify);
+      return () => mq.removeEventListener("change", notify);
+    },
+    () => window.matchMedia(wideQuery).matches,
+    () => true,
   );
 }
 
-function SetView({ cards, set }: { cards: Cards; set: PropertySet }) {
-  return (
-    <div className={`prop-set ${set.complete ? "complete" : ""}`}>
-      <div className="prop-set-head">
-        <span
-          className="swatch"
-          style={{ background: COLOR_CSS[set.color] }}
-          aria-hidden="true"
-        />
-        <strong>{COLOR_NAMES[set.color]}</strong>
-        <small>
-          {set.cards.length}/{SET_SIZE[set.color]}
-          {set.complete ? " · full" : ""} · rent {set.rent}M
-        </small>
-      </div>
-      {set.cards.map((id) => (
-        <Chip key={id} cards={cards} id={id} />
-      ))}
-      {set.house && <Chip cards={cards} id={set.house} />}
-      {set.hotel && <Chip cards={cards} id={set.hotel} />}
-    </div>
-  );
-}
-
-function PlayerArea({
-  player,
-  name,
-  cards,
-  active,
-  connected,
-  self,
-}: {
-  player: PublicPlayer;
-  name: string;
-  cards: Cards;
-  active: boolean;
-  connected: boolean;
-  self: boolean;
-}) {
-  return (
-    <section
-      className={`player-area ${active ? "active" : ""}`}
-      aria-label={`${name}'s table`}
-    >
-      <div className="player-head">
-        <strong>
-          {name}
-          {self ? " (you)" : ""}
-        </strong>
-        <span className={`pill ${connected ? "ready" : ""}`}>
-          {connected ? "Online" : "Away"}
-        </span>
-        {active && <span className="pill ready">Turn</span>}
-        <small>
-          {player.hand_count} in hand · bank {player.bank_value}M ·{" "}
-          {player.complete_colors}/3 full sets
-        </small>
-      </div>
-      <div className="zone">
-        <small className="zone-label">Bank</small>
-        {player.bank.length === 0 ? (
-          <small className="muted">Empty</small>
-        ) : (
-          player.bank.map((id) => <Chip key={id} cards={cards} id={id} />)
-        )}
-      </div>
-      <div className="sets">
-        {player.sets.map((set) => (
-          <SetView key={set.id} cards={cards} set={set} />
-        ))}
-        {player.sets.length === 0 && (
-          <small className="muted">No properties yet</small>
-        )}
-      </div>
-      {(player.unassigned.length > 0 ||
-        player.detached.length > 0 ||
-        player.incoming.length > 0) && (
-        <div className="zone">
-          {player.unassigned.map((id) => (
-            <span key={id}>
-              <small className="zone-label">Unassigned</small>{" "}
-              <Chip cards={cards} id={id} />
-            </span>
-          ))}
-          {player.detached.map((id) => (
-            <span key={id}>
-              <small className="zone-label">Unattached</small>{" "}
-              <Chip cards={cards} id={id} />
-            </span>
-          ))}
-          {player.incoming.map((id) => (
-            <span key={id}>
-              <small className="zone-label">To place</small>{" "}
-              <Chip cards={cards} id={id} />
-            </span>
-          ))}
-        </div>
-      )}
-    </section>
-  );
+function initial(name: string) {
+  return name.slice(0, 1).toUpperCase() || "?";
 }
 
 // Destinations a property card may go to: an own set of a legal color with
@@ -191,13 +100,7 @@ function destinationPayload(value: string) {
   return {};
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="game-field">
       {label}
@@ -206,9 +109,98 @@ function Field({
   );
 }
 
-// HandActions offers every legal-looking use of one hand card. The server
+// Modal dialog with focus placed inside and restored on close.
+function Dialog({
+  label,
+  onClose,
+  children,
+  wide = false,
+}: {
+  label: string;
+  onClose: () => void;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    box.current
+      ?.querySelector<HTMLElement>("select, button:not(.dialog-close), input")
+      ?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      previous?.focus?.();
+    };
+  }, [onClose]);
+  return (
+    <div
+      className="dialog-backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className={`dialog ${wide ? "wide" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+        ref={box}
+      >
+        <button className="dialog-close" aria-label="Close" onClick={onClose}>
+          ×
+        </button>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Selectable card thumbnails used for payments and returns.
+function CardPicker({
+  ids,
+  cards,
+  chosen,
+  onToggle,
+  locked = false,
+  order = false,
+}: {
+  ids: string[];
+  cards: Cards;
+  chosen: string[];
+  onToggle: (id: string) => void;
+  locked?: boolean;
+  order?: boolean;
+}) {
+  return (
+    <div className="card-picker">
+      {ids.map((id) => {
+        const on = chosen.includes(id);
+        return (
+          <button
+            key={id}
+            type="button"
+            className={`pick ${on ? "on" : ""}`}
+            aria-pressed={on}
+            aria-label={`${cardName(cards, id)}, ${cards[id]?.value ?? 0}M`}
+            disabled={locked}
+            onClick={() => onToggle(id)}
+          >
+            <PlayingCard card={cards[id]} width={64} selected={on} />
+            {order && on && (
+              <span className="pick-order">{chosen.indexOf(id) + 1}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// CardDialog offers every legal-looking use of one hand card. The server
 // validates; this only builds the typed intent.
-function HandActions({
+function CardDialog({
   id,
   state,
   cards,
@@ -216,6 +208,7 @@ function HandActions({
   name,
   busy,
   onCommand,
+  onClose,
 }: {
   id: string;
   state: MatchState;
@@ -224,13 +217,14 @@ function HandActions({
   name: (seat: number) => string;
   busy: boolean;
   onCommand: Command;
+  onClose: () => void;
 }) {
   const pub = state.view.public;
   const me = pub.players[mySeat];
   const card = cards[id];
   const opponents = pub.players.filter((p) => p.seat !== mySeat);
   const [dest, setDest] = useState(() =>
-    card?.kind.includes("wild") || card?.kind === "property"
+    card && (card.kind.includes("wild") || card.kind === "property")
       ? (destinations(card, me.sets)[0]?.value ?? "")
       : "",
   );
@@ -250,7 +244,9 @@ function HandActions({
     card.kind !== "property" &&
     card.kind !== "wild" &&
     card.kind !== "rainbow_wild";
-  const run = (kind: string, payload: object) => void onCommand(kind, payload);
+  const run = async (kind: string, payload: object) => {
+    if (await onCommand(kind, payload)) onClose();
+  };
   const targetSelect = (
     <Field label="Player">
       <select
@@ -282,7 +278,7 @@ function HandActions({
       </select>
     </Field>
   );
-  let play: React.ReactNode = null;
+  let play: ReactNode = null;
   if (
     card.kind === "property" ||
     card.kind === "wild" ||
@@ -300,10 +296,10 @@ function HandActions({
           </select>
         </Field>
         <button
-          className="primary"
+          className="btn-gold"
           disabled={busy}
           onClick={() =>
-            run("play_property", { card: id, ...destinationPayload(dest) })
+            void run("play_property", { card: id, ...destinationPayload(dest) })
           }
         >
           Play property
@@ -357,10 +353,10 @@ function HandActions({
               </label>
             ))}
           <button
-            className="primary"
+            className="btn-gold"
             disabled={busy || !setID}
             onClick={() =>
-              run("rent", {
+              void run("rent", {
                 card: id,
                 set: setID,
                 ...(doublers.length ? { doublers } : {}),
@@ -377,9 +373,9 @@ function HandActions({
       case "pass_go":
         play = (
           <button
-            className="primary"
+            className="btn-gold"
             disabled={busy}
-            onClick={() => run("pass_go", { card: id })}
+            onClick={() => void run("pass_go", { card: id })}
           >
             Play Pass Go (draw 2)
           </button>
@@ -388,9 +384,9 @@ function HandActions({
       case "birthday":
         play = (
           <button
-            className="primary"
+            className="btn-gold"
             disabled={busy}
-            onClick={() => run("birthday", { card: id })}
+            onClick={() => void run("birthday", { card: id })}
           >
             Everyone pays you 2M
           </button>
@@ -401,9 +397,9 @@ function HandActions({
           <>
             {targetSelect}
             <button
-              className="primary"
+              className="btn-gold"
               disabled={busy}
-              onClick={() => run("debt_collector", { card: id, target })}
+              onClick={() => void run("debt_collector", { card: id, target })}
             >
               Collect 5M
             </button>
@@ -416,9 +412,9 @@ function HandActions({
             {targetSelect}
             {cardSelect("Take", take, setTake, stealable(targetPlayer, true))}
             <button
-              className="primary"
+              className="btn-gold"
               disabled={busy || !take}
-              onClick={() => run("sly_deal", { card: id, target, take })}
+              onClick={() => void run("sly_deal", { card: id, target, take })}
             >
               Steal
             </button>
@@ -432,10 +428,10 @@ function HandActions({
             {cardSelect("Take", take, setTake, stealable(targetPlayer, true))}
             {cardSelect("Give", offer, setOffer, stealable(me, false))}
             <button
-              className="primary"
+              className="btn-gold"
               disabled={busy || !take || !offer}
               onClick={() =>
-                run("forced_deal", { card: id, target, take, offer })
+                void run("forced_deal", { card: id, target, take, offer })
               }
             >
               Swap
@@ -462,10 +458,10 @@ function HandActions({
               </select>
             </Field>
             <button
-              className="primary"
+              className="btn-gold"
               disabled={busy || !setID}
               onClick={() =>
-                run("deal_breaker", { card: id, target, set: setID })
+                void run("deal_breaker", { card: id, target, set: setID })
               }
             >
               Take the set
@@ -505,9 +501,11 @@ function HandActions({
                 </select>
               </Field>
               <button
-                className="primary"
+                className="btn-gold"
                 disabled={busy || !setID}
-                onClick={() => run("play_building", { card: id, set: setID })}
+                onClick={() =>
+                  void run("play_building", { card: id, set: setID })
+                }
               >
                 Build {card.name}
               </button>
@@ -532,23 +530,32 @@ function HandActions({
     }
   }
   return (
-    <div
-      className="hand-actions"
-      role="group"
-      aria-label={`Use ${cardName(cards, id)}`}
-    >
-      <strong>{cardName(cards, id)}</strong>
-      {play}
-      {bank && (
-        <button
-          className="secondary"
-          disabled={busy}
-          onClick={() => run("bank", { card: id })}
-        >
-          Bank as {card.value}M
-        </button>
-      )}
-    </div>
+    <Dialog label={`Use ${cardName(cards, id)}`} onClose={onClose}>
+      <div className="card-dialog hand-actions">
+        <div className="card-dialog-preview">
+          <PlayingCard card={card} width={150} />
+        </div>
+        <div className="card-dialog-body">
+          <strong>{cardName(cards, id)}</strong>
+          <p className="muted">
+            {pub.plays_left} play{pub.plays_left === 1 ? "" : "s"} left this
+            turn
+          </p>
+          <div className="card-dialog-actions">
+            {play}
+            {bank && (
+              <button
+                className="btn-ghost"
+                disabled={busy}
+                onClick={() => void run("bank", { card: id })}
+              >
+                Bank as {card.value}M
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </Dialog>
   );
 }
 
@@ -578,21 +585,20 @@ function ResponsePanel({
   const base = { pending: p.id, step: p.step };
   const describe = (key: string) =>
     key === "charge" ? "the whole charge" : "one Double the Rent";
-  let prompt: string;
-  if (starting) {
-    prompt = `${name(p.source)} played ${actionName(p.action)} on you. Accept, or play Just Say No.`;
-  } else {
-    prompt =
-      mySeat === p.source
-        ? `${name(t.seat)} said Just Say No to ${describe(t.chain!.component)}. Let it stand, or counter with your own.`
-        : `${name(p.source)} countered your Just Say No. Accept, or counter again.`;
-  }
+  const prompt = starting
+    ? `${name(p.source)} played ${actionName(p.action)} on you. Accept, or play Just Say No.`
+    : mySeat === p.source
+      ? `${name(t.seat)} said Just Say No to ${describe(t.chain!.component)}. Let it stand, or counter with your own.`
+      : `${name(p.source)} countered your Just Say No. Accept, or counter again.`;
   return (
     <div className="decision" role="region" aria-label="Your response">
-      <p>{prompt}</p>
+      <div className="decision-head">
+        <PlayingCard card={cards[p.card]} width={56} />
+        <p>{prompt}</p>
+      </div>
       <div className="decision-row">
         <button
-          className="primary"
+          className="btn-gold"
           disabled={busy}
           onClick={() => void onCommand("accept", base)}
         >
@@ -617,7 +623,7 @@ function ResponsePanel({
               </Field>
             )}
             <button
-              className="secondary"
+              className="btn-danger"
               disabled={busy}
               onClick={() =>
                 void onCommand("just_say_no", {
@@ -651,6 +657,7 @@ function PaymentPanel({
 }) {
   const p = state.view.public.pending!;
   const t = p.targets[p.current];
+  const owed = t.owed ?? 0;
   const me = state.view.public.players[mySeat];
   const eligible = [
     ...me.bank,
@@ -662,7 +669,7 @@ function PaymentPanel({
     ...me.detached,
   ];
   const total = eligible.reduce((n, c) => n + (cards[c]?.value ?? 0), 0);
-  const short = total < (t.owed ?? 0);
+  const short = total < owed;
   const [chosen, setChosen] = useState<string[]>(() => (short ? eligible : []));
   const paid = chosen.reduce((n, c) => n + (cards[c]?.value ?? 0), 0);
   const breaks = me.sets.filter(
@@ -671,49 +678,47 @@ function PaymentPanel({
   return (
     <div className="decision" role="region" aria-label="Payment">
       <p>
-        You owe <strong>{t.owed}M</strong>. Choose cards from your bank or
-        properties; no change is given.
+        You owe <strong className="gold">{owed}M</strong>. Choose cards from
+        your bank or properties; no change is given.
         {short &&
           " Your table is worth less than the debt, so you give everything with value."}
       </p>
       {eligible.length === 0 && (
         <p className="muted">You have nothing on the table to pay with.</p>
       )}
-      <div className="pay-grid">
-        {eligible.map((c) => (
-          <label key={c} className="check">
-            <input
-              type="checkbox"
-              checked={chosen.includes(c)}
-              disabled={short}
-              onChange={(e) =>
-                setChosen(
-                  e.target.checked
-                    ? [...chosen, c]
-                    : chosen.filter((x) => x !== c),
-                )
-              }
-            />
-            <Chip cards={cards} id={c} />
-          </label>
-        ))}
-      </div>
-      <p aria-live="polite">
-        Selected {paid}M of {t.owed}M
-        {paid > (t.owed ?? 0) ? ` (overpaying ${paid - (t.owed ?? 0)}M)` : ""}
-        {breaks.length > 0
-          ? ` · breaks your ${breaks.map((s) => COLOR_NAMES[s.color]).join(", ")} set`
-          : ""}
-      </p>
-      <button
-        className="primary"
-        disabled={busy || (!short && paid < (t.owed ?? 0))}
-        onClick={() =>
-          void onCommand("pay", { pending: p.id, step: p.step, cards: chosen })
+      <CardPicker
+        ids={eligible}
+        cards={cards}
+        chosen={chosen}
+        locked={short}
+        onToggle={(c) =>
+          setChosen(
+            chosen.includes(c) ? chosen.filter((x) => x !== c) : [...chosen, c],
+          )
         }
-      >
-        Pay {paid}M
-      </button>
+      />
+      <div className="decision-row">
+        <span aria-live="polite" className="pay-total">
+          Selected {paid}M of {owed}M
+          {paid > owed ? ` (overpaying ${paid - owed}M)` : ""}
+          {breaks.length > 0
+            ? ` · breaks your ${breaks.map((s) => COLOR_NAMES[s.color]).join(", ")} set`
+            : ""}
+        </span>
+        <button
+          className="btn-gold"
+          disabled={busy || (!short && paid < owed)}
+          onClick={() =>
+            void onCommand("pay", {
+              pending: p.id,
+              step: p.step,
+              cards: chosen,
+            })
+          }
+        >
+          Pay {paid}M
+        </button>
+      </div>
     </div>
   );
 }
@@ -739,9 +744,10 @@ function PlacementPanel({
   if (!card) return null;
   return (
     <div className="decision" role="region" aria-label="Place a received card">
-      <p>
-        You received <Chip cards={cards} id={id} />. Where should it go?
-      </p>
+      <div className="decision-head">
+        <PlayingCard card={card} width={64} />
+        <p>You received {cardName(cards, id)}. Where should it go?</p>
+      </div>
       <div className="decision-row">
         <Field label="Place in">
           <select value={dest} onChange={(e) => setDest(e.target.value)}>
@@ -753,7 +759,7 @@ function PlacementPanel({
           </select>
         </Field>
         <button
-          className="primary"
+          className="btn-gold"
           disabled={busy}
           onClick={() =>
             void onCommand("place_received", {
@@ -771,20 +777,20 @@ function PlacementPanel({
 
 // Reorganize: choose a destination for every tabled card, then submit the
 // whole layout at once (it costs no play).
-function Reorganize({
+function ReorganizeDialog({
   state,
   cards,
   mySeat,
   busy,
   onCommand,
-  onDone,
+  onClose,
 }: {
   state: MatchState;
   cards: Cards;
   mySeat: number;
   busy: boolean;
   onCommand: Command;
-  onDone: () => void;
+  onClose: () => void;
 }) {
   const me = state.view.public.players[mySeat];
   const props: [string, string][] = [
@@ -854,124 +860,265 @@ function Reorganize({
         detached,
       })
     )
-      onDone();
+      onClose();
   };
   return (
-    <div className="decision" role="region" aria-label="Reorganize properties">
-      <p>
+    <Dialog label="Reorganize properties" onClose={onClose} wide>
+      <h2 className="dialog-title">Reorganize properties</h2>
+      <p className="muted">
         Move property cards and buildings. Everything is checked when you save;
         this does not use a play.
       </p>
-      {props.map(([c]) => (
-        <Field key={c} label={cardName(cards, c)}>
-          <select
-            value={where[c]}
-            onChange={(e) => setWhere({ ...where, [c]: e.target.value })}
-          >
-            {destinations(
-              cards[c],
-              me.sets,
-              where[c].startsWith("set:") ? where[c].slice(4) : undefined,
-            ).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-      ))}
-      {buildings.map(([b]) => (
-        <Field key={b} label={cardName(cards, b)}>
-          <select
-            value={where[b]}
-            onChange={(e) => setWhere({ ...where, [b]: e.target.value })}
-          >
-            <option value="">Unattached</option>
-            {me.sets
-              .filter((s) => s.color !== "railroad" && s.color !== "utility")
-              .map((s) => (
-                <option key={s.id} value={s.id}>
-                  {COLOR_NAMES[s.color]} set
-                </option>
-              ))}
-          </select>
-        </Field>
-      ))}
+      <div className="reorg-grid">
+        {props.map(([c]) => (
+          <div key={c} className="reorg-item">
+            <PlayingCard card={cards[c]} width={64} />
+            <Field label={cardName(cards, c)}>
+              <select
+                value={where[c]}
+                onChange={(e) => setWhere({ ...where, [c]: e.target.value })}
+              >
+                {destinations(
+                  cards[c],
+                  me.sets,
+                  where[c].startsWith("set:") ? where[c].slice(4) : undefined,
+                ).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        ))}
+        {buildings.map(([b]) => (
+          <div key={b} className="reorg-item">
+            <PlayingCard card={cards[b]} width={64} />
+            <Field label={cardName(cards, b)}>
+              <select
+                value={where[b]}
+                onChange={(e) => setWhere({ ...where, [b]: e.target.value })}
+              >
+                <option value="">Unattached</option>
+                {me.sets
+                  .filter(
+                    (s) => s.color !== "railroad" && s.color !== "utility",
+                  )
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {COLOR_NAMES[s.color]} set
+                    </option>
+                  ))}
+              </select>
+            </Field>
+          </div>
+        ))}
+      </div>
       <div className="decision-row">
         <button
-          className="primary"
+          className="btn-gold"
           disabled={busy}
           onClick={() => void submit()}
         >
           Save arrangement
         </button>
-        <button className="text-button" onClick={onDone}>
+        <button className="btn-ghost" onClick={onClose}>
           Cancel
         </button>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
-function EndTurn({
+function ReturnDialog({
   state,
   cards,
   busy,
   onCommand,
+  onClose,
 }: {
   state: MatchState;
   cards: Cards;
   busy: boolean;
   onCommand: Command;
+  onClose: () => void;
 }) {
   const hand = state.view.self.hand;
   const excess = Math.max(0, hand.length - 7);
   const [chosen, setChosen] = useState<string[]>([]);
-  if (excess === 0) {
-    return (
-      <button
-        className="secondary"
-        disabled={busy}
-        onClick={() => void onCommand("end_turn", {})}
-      >
-        End turn
-      </button>
-    );
-  }
   return (
-    <div className="decision" role="region" aria-label="End turn">
-      <p>
-        You have {hand.length} cards. Choose {excess} to put on the bottom of
-        the draw pile (the first chosen is drawn first).
-      </p>
-      <div className="pay-grid">
-        {hand.map((c) => (
-          <label key={c} className="check">
-            <input
-              type="checkbox"
-              checked={chosen.includes(c)}
-              disabled={!chosen.includes(c) && chosen.length >= excess}
-              onChange={(e) =>
-                setChosen(
-                  e.target.checked
-                    ? [...chosen, c]
-                    : chosen.filter((x) => x !== c),
-                )
-              }
-            />
-            <Chip cards={cards} id={c} />
-          </label>
-        ))}
+    <Dialog label="End turn" onClose={onClose} wide>
+      <div className="decision">
+        <p>
+          You have {hand.length} cards. Choose {excess} to put on the bottom of
+          the draw pile (the first chosen is drawn first).
+        </p>
+        <CardPicker
+          ids={hand}
+          cards={cards}
+          chosen={chosen}
+          order
+          onToggle={(c) =>
+            setChosen(
+              chosen.includes(c)
+                ? chosen.filter((x) => x !== c)
+                : chosen.length < excess
+                  ? [...chosen, c]
+                  : chosen,
+            )
+          }
+        />
+        <div className="decision-row">
+          <button
+            className="btn-gold"
+            disabled={busy || chosen.length !== excess}
+            onClick={() =>
+              void onCommand("end_turn", { return: chosen }).then(
+                (ok) => ok && onClose(),
+              )
+            }
+          >
+            Return {excess} and end turn
+          </button>
+        </div>
       </div>
-      <button
-        className="secondary"
-        disabled={busy || chosen.length !== excess}
-        onClick={() => void onCommand("end_turn", { return: chosen })}
-      >
-        Return {excess} and end turn
-      </button>
+    </Dialog>
+  );
+}
+
+function Crest({
+  name,
+  you = false,
+  active = false,
+  waiting = false,
+  away = false,
+  stats,
+  onClick,
+  selected = false,
+  compact = false,
+}: {
+  name: string;
+  you?: boolean;
+  active?: boolean;
+  waiting?: boolean;
+  away?: boolean;
+  stats: { sets: number; money: number; hand: number };
+  onClick?: () => void;
+  selected?: boolean;
+  compact?: boolean;
+}) {
+  const body = (
+    <>
+      <span className="crest-avatar">
+        {initial(name)}
+        {waiting && (
+          <span className="crest-wait" title="Waiting for this player">
+            ⌛
+          </span>
+        )}
+      </span>
+      <span className="crest-text">
+        <span className="crest-name">
+          {name}
+          {you && <em> (YOU)</em>}
+          {away && <em className="away"> away</em>}
+        </span>
+        <span className="crest-stats">
+          <b className="money">${stats.money}M</b>
+          <b>{stats.sets}/3 sets</b>
+          <span>{stats.hand}c</span>
+        </span>
+      </span>
+    </>
+  );
+  const cls = `crest ${active ? "turn" : ""} ${selected ? "selected" : ""} ${away ? "is-away" : ""} ${compact ? "compact" : ""}`;
+  return onClick ? (
+    <button
+      type="button"
+      className={cls}
+      aria-pressed={selected}
+      onClick={onClick}
+    >
+      {body}
+    </button>
+  ) : (
+    <div className={cls}>{body}</div>
+  );
+}
+
+// Read-only result: winner banner and every player's final table.
+function ResultView({
+  state,
+  cards,
+  name,
+}: {
+  state: MatchState;
+  cards: Cards;
+  name: (seat: number) => string;
+}) {
+  const winner = state.participants.find((p) => p.user_id === state.winner_id);
+  const pub = state.view.public;
+  return (
+    <div className="felt result-view game-table">
+      <div className={`game-status result ${state.status}`} role="status">
+        <strong>{status(state, name, state.view.self.seat)}</strong>
+        {winner && <span className="muted"> Final tables below.</span>}
+      </div>
+      {pub.players.map((p) => (
+        <section
+          key={p.seat}
+          className="result-board"
+          aria-label={`${name(p.seat)}'s final table`}
+        >
+          <div className="result-head">
+            <strong>{name(p.seat)}</strong>
+            <span className="muted">
+              {p.complete_colors}/3 full sets · bank {p.bank_value}M
+            </span>
+          </div>
+          <div className="board-scroll">
+            <Board player={p} cards={cards} width={76} />
+          </div>
+        </section>
+      ))}
     </div>
   );
+}
+
+function status(
+  state: MatchState,
+  name: (seat: number) => string,
+  mySeat: number,
+): string {
+  const pub = state.view.public;
+  const pending = pub.pending;
+  const target = pending?.targets[pending.current];
+  const winner = state.participants.find((p) => p.user_id === state.winner_id);
+  const away = state.participants.filter((p) => !p.connected);
+  const myTurn = pub.active === mySeat && pub.phase === "play";
+  if (state.status === "finished")
+    return `${winner ? winner.display_name : "A player"} won with three full sets of different colors.`;
+  if (state.status === "abandoned")
+    return state.end_reason === "left"
+      ? `Match abandoned: ${state.participants.find((p) => p.user_id === state.ended_by)?.display_name ?? "a player"} left. No winner.`
+      : state.end_reason === "expired"
+        ? "Match expired after everyone was away for 24 hours. No winner."
+        : "Match abandoned by vote. No winner.";
+  if (state.status === "paused")
+    return `Paused: waiting for ${away.map((p) => p.display_name).join(", ")} to reconnect.`;
+  if (pub.phase === "play")
+    return myTurn
+      ? `Your turn: ${pub.plays_left} play${pub.plays_left === 1 ? "" : "s"} left.`
+      : `${name(pub.active)}'s turn.`;
+  if (pub.phase === "placement") return "Received cards are being placed.";
+  if (pending && target) {
+    const who =
+      target.stage === "chain"
+        ? name(target.chain!.waiting)
+        : name(target.seat);
+    return `${name(pending.source)} played ${actionName(pending.action)}. Waiting for ${who}${target.stage === "pay" ? ` to pay ${target.owed}M` : " to respond"}.`;
+  }
+  return "";
 }
 
 export function GameTable({
@@ -982,257 +1129,407 @@ export function GameTable({
   onCommand,
   onLeave,
   onVote,
+  roomName,
+  connection,
+  alerts,
+  chat,
+  unread = 0,
 }: Props) {
+  const wide = useWide();
   const pub = state.view.public;
   const mySeat = state.view.self.seat;
   const [selected, setSelected] = useState<string | null>(null);
   const [reorganizing, setReorganizing] = useState(false);
+  const [returning, setReturning] = useState(false);
+  const [pinnedOpp, setPinnedOpp] = useState<number | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [promptHidden, setPromptHidden] = useState(false);
   const people = new Map(state.participants.map((p) => [p.seat, p]));
   const name = (seat: number) => {
     const p = people.get(seat);
     return p ? (p.user_id === me ? "You" : p.display_name) : `Seat ${seat + 1}`;
   };
-  const waiting = pub.waiting_for.includes(mySeat);
-  const myTurn = pub.active === mySeat && pub.phase === "play";
   const live = state.status === "playing" || state.status === "paused";
-  const pending = pub.pending;
-  const target = pending?.targets[pending.current];
-  const away = state.participants.filter((p) => !p.connected);
-  const winner = state.participants.find((p) => p.user_id === state.winner_id);
-  const stateKey = `${state.revision}`;
+  if (!live) return <ResultView state={state} cards={cards} name={name} />;
+
+  const waiting = pub.waiting_for.includes(mySeat);
+  const playing = state.status === "playing";
+  const myTurn = pub.active === mySeat && pub.phase === "play" && playing;
   const hand = state.view.self.hand;
-  const selectedCard = selected && hand.includes(selected) ? selected : null;
-
-  let status: string;
-  if (state.status === "finished")
-    status = `${winner ? winner.display_name : "A player"} won with three full sets of different colors.`;
-  else if (state.status === "abandoned")
-    status =
-      state.end_reason === "left"
-        ? `Match abandoned: ${state.participants.find((p) => p.user_id === state.ended_by)?.display_name ?? "a player"} left. No winner.`
-        : state.end_reason === "expired"
-          ? "Match expired after everyone was away for 24 hours. No winner."
-          : "Match abandoned by vote. No winner.";
-  else if (state.status === "paused")
-    status = `Paused: waiting for ${away.map((p) => p.display_name).join(", ")} to reconnect.`;
-  else if (pub.phase === "play")
-    status = myTurn
-      ? `Your turn: ${pub.plays_left} play${pub.plays_left === 1 ? "" : "s"} left.`
-      : `${name(pub.active)}'s turn.`;
-  else if (pub.phase === "placement")
-    status = "Received cards are being placed.";
-  else if (pending && target) {
-    const who =
-      target.stage === "chain"
-        ? name(target.chain!.waiting)
-        : name(target.seat);
-    status = `${name(pending.source)} played ${actionName(pending.action)}. Waiting for ${who}${target.stage === "pay" ? ` to pay ${target.owed}M` : " to respond"}.`;
-  } else status = "";
-
+  const selectedCard =
+    selected && hand.includes(selected) && myTurn && pub.plays_left > 0
+      ? selected
+      : null;
+  const stateKey = `${state.revision}`;
+  const myPlayer = pub.players[mySeat];
+  const opponents = pub.players.filter((p) => p.seat !== mySeat);
+  // Follow whoever the game is waiting on unless the player picked a board.
+  const followed =
+    opponents.find((p) => pub.waiting_for.includes(p.seat)) ??
+    opponents.find((p) => p.seat === pub.active) ??
+    opponents[0];
+  const shownOpp = opponents.find((p) => p.seat === pinnedOpp) ?? followed;
+  const stats = (p: PublicPlayer) => ({
+    sets: p.complete_colors,
+    money: p.bank_value,
+    hand: p.hand_count,
+  });
+  const tableWidth = wide ? 88 : 76;
   const log = state.events
     .map((e) => ({ e, text: describeEvent(e, cards, name) }))
     .filter((x) => x.text)
-    .slice(-14)
+    .slice(-12)
     .reverse();
 
+  let prompt: ReactNode = null;
+  if (playing && waiting && pub.phase === "response")
+    prompt = (
+      <ResponsePanel
+        key={`r${stateKey}`}
+        state={state}
+        cards={cards}
+        mySeat={mySeat}
+        name={name}
+        busy={busy}
+        onCommand={onCommand}
+      />
+    );
+  if (playing && waiting && pub.phase === "payment")
+    prompt = (
+      <PaymentPanel
+        key={`p${stateKey}`}
+        state={state}
+        cards={cards}
+        mySeat={mySeat}
+        busy={busy}
+        onCommand={onCommand}
+      />
+    );
+  if (playing && waiting && pub.phase === "placement")
+    prompt = (
+      <PlacementPanel
+        key={`pl${stateKey}`}
+        state={state}
+        cards={cards}
+        mySeat={mySeat}
+        busy={busy}
+        onCommand={onCommand}
+      />
+    );
+  const vote =
+    state.status === "paused" ? (
+      <div className="decision vote">
+        {state.can_vote_abandon ? (
+          <>
+            <p>
+              A seat has been empty for over 5 minutes. If everyone still here
+              agrees, the match ends with no winner. You can also keep waiting.
+            </p>
+            <button
+              className="btn-ghost"
+              disabled={busy}
+              onClick={() => onVote(true)}
+            >
+              Vote to abandon
+            </button>
+          </>
+        ) : state.participants.find((p) => p.user_id === me)?.abandon_vote ? (
+          <p>
+            You voted to abandon.{" "}
+            <button className="text-button" onClick={() => onVote(false)}>
+              Withdraw vote
+            </button>
+          </p>
+        ) : (
+          <p className="muted">
+            Seats are held for 5 minutes
+            {state.vote_opens_at
+              ? ` (until ${new Date(state.vote_opens_at).toLocaleTimeString()})`
+              : ""}
+            ; then remaining players may vote to abandon.
+          </p>
+        )}
+      </div>
+    ) : null;
+
+  const handNode = (
+    <Hand
+      ids={hand}
+      cards={cards}
+      selected={selectedCard}
+      disabled={!myTurn || pub.plays_left === 0}
+      layout={wide ? "fan" : "rail"}
+      onSelect={(id) => setSelected(selectedCard === id ? null : id)}
+    />
+  );
+
+  const endTurn = () => {
+    if (hand.length > 7) setReturning(true);
+    else void onCommand("end_turn", {});
+  };
+  const turnPill = (
+    <div className={`turn-pill ${myTurn ? "yours" : ""}`}>
+      <b>
+        {myTurn
+          ? "Your turn"
+          : pub.active === mySeat
+            ? "Waiting on others"
+            : `${name(pub.active)}'s turn`}
+      </b>
+      <small>
+        {myTurn
+          ? `${3 - pub.plays_left}/3 cards played`
+          : `${hand.length} cards in hand`}
+      </small>
+    </div>
+  );
+  const turnActions = myTurn && (
+    <div className="platter-actions">
+      <button className="btn-ghost small" onClick={() => setReorganizing(true)}>
+        Reorganize properties
+      </button>
+      <button className="btn-gold" disabled={busy} onClick={endTurn}>
+        End turn
+      </button>
+    </div>
+  );
+
   return (
-    <div className="game-table">
+    <div
+      className={`felt game-table ${wide ? "wide" : "compact"}`}
+      role="region"
+      aria-label="Match table"
+    >
+      <header className="table-top">
+        <div className="table-brand">
+          <span className="brand-mark">♣</span> CardPlay
+          {roomName && <span className="table-room">{roomName}</span>}
+        </div>
+        <div className="table-top-actions">
+          {connection && <span className="table-conn">{connection}</span>}
+          <button
+            className="btn-ghost small chat-toggle"
+            aria-expanded={chatOpen}
+            onClick={() => setChatOpen(!chatOpen)}
+          >
+            Chat
+            {unread > 0 && (
+              <>
+                <span className="chat-count" aria-hidden="true">
+                  {unread}
+                </span>
+                <span className="sr-only unread-badge">
+                  {unread} new chat message{unread === 1 ? "" : "s"}
+                </span>
+              </>
+            )}
+          </button>
+          <button
+            className="btn-danger small"
+            disabled={busy}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Leave the match? It ends for everyone with no winner.",
+                )
+              )
+                onLeave();
+            }}
+          >
+            Leave match
+          </button>
+        </div>
+      </header>
+
+      {alerts && <div className="table-alerts">{alerts}</div>}
+
       <div
         className={`game-status ${state.status}`}
         role="status"
         aria-live="polite"
       >
-        <strong>{status}</strong>
-        <span className="muted">
-          {" "}
+        <strong>{status(state, name, mySeat)}</strong>
+        <span className="status-meta">
           Turn {pub.turn} · draw pile {pub.draw_count} · center{" "}
           {pub.center_pile.length}
         </span>
       </div>
-      {state.status === "paused" && (
-        <div className="decision">
-          {state.can_vote_abandon ? (
-            <>
-              <p>
-                A seat has been empty for over 5 minutes. If everyone still here
-                agrees, the match ends with no winner. You can also keep
-                waiting.
-              </p>
-              <button
-                className="secondary"
-                disabled={busy}
-                onClick={() => onVote(true)}
-              >
-                Vote to abandon
-              </button>
-            </>
-          ) : state.participants.find((p) => p.user_id === me)?.abandon_vote ? (
-            <p>
-              You voted to abandon.{" "}
-              <button className="text-button" onClick={() => onVote(false)}>
-                Withdraw vote
-              </button>
-            </p>
-          ) : (
-            <p className="muted">
-              Seats are held for 5 minutes
-              {state.vote_opens_at
-                ? ` (until ${new Date(state.vote_opens_at).toLocaleTimeString()})`
-                : ""}
-              ; then remaining players may vote to abandon.
-            </p>
-          )}
-        </div>
-      )}
-      {live &&
-        state.status === "playing" &&
-        waiting &&
-        pub.phase === "response" && (
-          <ResponsePanel
-            key={`r${stateKey}`}
-            state={state}
-            cards={cards}
-            mySeat={mySeat}
-            name={name}
-            busy={busy}
-            onCommand={onCommand}
+
+      <nav className="opp-rail" aria-label="Opponents">
+        {opponents.map((p) => (
+          <Crest
+            key={p.seat}
+            name={name(p.seat)}
+            active={pub.active === p.seat}
+            waiting={pub.waiting_for.includes(p.seat) && pub.phase !== "play"}
+            away={!people.get(p.seat)?.connected}
+            stats={stats(p)}
+            selected={shownOpp?.seat === p.seat}
+            compact={!wide}
+            onClick={() => setPinnedOpp(p.seat)}
           />
-        )}
-      {live &&
-        state.status === "playing" &&
-        waiting &&
-        pub.phase === "payment" && (
-          <PaymentPanel
-            key={`p${stateKey}`}
-            state={state}
-            cards={cards}
-            mySeat={mySeat}
-            busy={busy}
-            onCommand={onCommand}
-          />
-        )}
-      {live &&
-        state.status === "playing" &&
-        waiting &&
-        pub.phase === "placement" && (
-          <PlacementPanel
-            key={`pl${stateKey}`}
-            state={state}
-            cards={cards}
-            mySeat={mySeat}
-            busy={busy}
-            onCommand={onCommand}
-          />
-        )}
-      <div className="table-players">
-        {pub.players
-          .filter((p) => p.seat !== mySeat)
-          .map((p) => (
-            <PlayerArea
-              key={p.seat}
-              player={p}
-              name={name(p.seat)}
-              cards={cards}
-              active={pub.active === p.seat}
-              connected={people.get(p.seat)?.connected ?? false}
-              self={false}
-            />
-          ))}
-      </div>
-      <PlayerArea
-        player={pub.players[mySeat]}
-        name={name(mySeat)}
-        cards={cards}
-        active={pub.active === mySeat}
-        connected
-        self
-      />
-      <section className="my-hand" aria-label="Your hand">
-        <h2>Your hand ({hand.length})</h2>
-        <div className="hand-cards">
-          {hand.map((id) => (
-            <button
-              key={id}
-              className={`hand-card ${selectedCard === id ? "selected" : ""}`}
-              aria-pressed={selectedCard === id}
-              disabled={
-                !myTurn || state.status !== "playing" || pub.plays_left === 0
-              }
-              onClick={() => setSelected(selectedCard === id ? null : id)}
-            >
-              <Chip cards={cards} id={id} />
-            </button>
-          ))}
-        </div>
-        {myTurn &&
-          state.status === "playing" &&
-          selectedCard &&
-          pub.plays_left > 0 && (
-            <HandActions
-              key={`${selectedCard}:${stateKey}`}
-              id={selectedCard}
-              state={state}
-              cards={cards}
-              mySeat={mySeat}
-              name={name}
-              busy={busy}
-              onCommand={onCommand}
-            />
-          )}
-        {myTurn && state.status === "playing" && (
-          <div className="decision-row">
-            {reorganizing ? (
-              <Reorganize
-                key={`o${stateKey}`}
-                state={state}
-                cards={cards}
-                mySeat={mySeat}
-                busy={busy}
-                onCommand={onCommand}
-                onDone={() => setReorganizing(false)}
-              />
-            ) : (
-              <button
-                className="text-button"
-                onClick={() => setReorganizing(true)}
-              >
-                Reorganize properties
-              </button>
-            )}
-            <EndTurn
-              key={`e${stateKey}`}
-              state={state}
-              cards={cards}
-              busy={busy}
-              onCommand={onCommand}
-            />
-          </div>
-        )}
-      </section>
-      <section className="game-log" aria-label="Recent actions">
-        <h2>Recent actions</h2>
-        <ol>
-          {log.map(({ e, text }, i) => (
-            <li key={`${e.revision}-${i}`}>{text}</li>
-          ))}
-        </ol>
-      </section>
-      {live && (
-        <button
-          className="text-button"
-          disabled={busy}
-          onClick={() => {
-            if (
-              window.confirm(
-                "Leave the match? It ends for everyone with no winner.",
-              )
-            )
-              onLeave();
-          }}
+        ))}
+      </nav>
+
+      <div className="table-center">
+        <section
+          className="table-panel opp-panel"
+          aria-label={
+            shownOpp ? `${name(shownOpp.seat)}'s table` : "Opponent table"
+          }
         >
-          Leave match
-        </button>
+          {shownOpp && (
+            <>
+              <div className="panel-caption">
+                <span>
+                  {name(shownOpp.seat)}&apos;s table
+                  {pub.active === shownOpp.seat ? " · in play" : ""}
+                  {shownOpp.complete_colors === 2 ? " · 1 set from win" : ""}
+                </span>
+                <span>
+                  {shownOpp.sets.filter((s) => s.complete).length} complete ·{" "}
+                  {shownOpp.sets.filter((s) => !s.complete).length} partial ·{" "}
+                  {shownOpp.hand_count} cards in hand
+                </span>
+              </div>
+              <div className="board-scroll">
+                <Board player={shownOpp} cards={cards} width={tableWidth} />
+              </div>
+            </>
+          )}
+        </section>
+        <aside
+          className="table-panel pile-rail"
+          aria-label="Draw pile and center pile"
+        >
+          <div className="panel-caption">
+            <span>Table</span>
+          </div>
+          <div className="piles">
+            <div className="pile-block">
+              <DeckPile count={pub.draw_count} width={wide ? 72 : 44} />
+              <span>
+                DECK <b>{pub.draw_count}</b>
+              </span>
+            </div>
+            <div className="pile-block">
+              <CenterPile
+                ids={pub.center_pile}
+                cards={cards}
+                width={wide ? 72 : 44}
+              />
+              <span>
+                CENTER <b>{pub.center_pile.length}</b>
+              </span>
+            </div>
+          </div>
+          <details className="game-log" open={wide}>
+            <summary>Recent actions</summary>
+            <ol>
+              {log.map(({ e, text }, i) => (
+                <li key={`${e.revision}-${i}`}>{text}</li>
+              ))}
+            </ol>
+          </details>
+        </aside>
+      </div>
+
+      {(prompt || vote) && (
+        <div className={`prompt-dock ${promptHidden ? "hidden" : ""}`}>
+          <button
+            className="prompt-toggle"
+            onClick={() => setPromptHidden(!promptHidden)}
+          >
+            {promptHidden ? "Show decision ▲" : "Look at the table ▼"}
+          </button>
+          {!promptHidden && (
+            <>
+              {prompt}
+              {vote}
+            </>
+          )}
+        </div>
       )}
+
+      <section className="platter" aria-label="Your area">
+        <div className="platter-head">
+          <Crest
+            name={people.get(mySeat)?.display_name ?? "You"}
+            you
+            active={pub.active === mySeat}
+            stats={stats(myPlayer)}
+            compact={!wide}
+          />
+          {wide && turnPill}
+          {wide && turnActions}
+        </div>
+        <div className="platter-grid">
+          <div className="board-scroll my-board">
+            <Board player={myPlayer} cards={cards} width={tableWidth} />
+          </div>
+          {wide && <div className="hand-area my-hand">{handNode}</div>}
+        </div>
+      </section>
+
+      {!wide && (
+        <div className="hand-dock my-hand">
+          <div className="dock-bar">
+            {turnPill}
+            {turnActions}
+          </div>
+          {handNode}
+        </div>
+      )}
+
+      {selectedCard && (
+        <CardDialog
+          key={`${selectedCard}:${stateKey}`}
+          id={selectedCard}
+          state={state}
+          cards={cards}
+          mySeat={mySeat}
+          name={name}
+          busy={busy}
+          onCommand={onCommand}
+          onClose={() => setSelected(null)}
+        />
+      )}
+      {reorganizing && myTurn && (
+        <ReorganizeDialog
+          key={`o${stateKey}`}
+          state={state}
+          cards={cards}
+          mySeat={mySeat}
+          busy={busy}
+          onCommand={onCommand}
+          onClose={() => setReorganizing(false)}
+        />
+      )}
+      {returning && myTurn && (
+        <ReturnDialog
+          key={`e${stateKey}`}
+          state={state}
+          cards={cards}
+          busy={busy}
+          onCommand={onCommand}
+          onClose={() => setReturning(false)}
+        />
+      )}
+
+      <aside
+        className={`chat-drawer ${chatOpen ? "open" : ""}`}
+        aria-label="Room chat"
+        inert={!chatOpen}
+      >
+        <button
+          className="dialog-close"
+          aria-label="Close chat"
+          onClick={() => setChatOpen(false)}
+        >
+          ×
+        </button>
+        {chat}
+      </aside>
     </div>
   );
 }

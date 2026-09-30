@@ -19,10 +19,17 @@ func Apply(s *State, seat int, a Action) (*State, []Event, error) {
 		return s, nil, err
 	}
 	if err := next.CheckInvariants(); err != nil {
-		return s, nil, reject(CodeIllegal, "rejected: %v", err)
+		return s, nil, &InvariantError{Detail: err.Error()}
 	}
 	return next, events, nil
 }
+
+// InvariantError reports a transition that would break a state invariant:
+// an engine bug, never a player mistake. Its message reveals nothing; Detail
+// may name hidden cards and must not reach players or ordinary logs.
+type InvariantError struct{ Detail string }
+
+func (e *InvariantError) Error() string { return "rules engine invariant violated" }
 
 func (s *State) apply(seat int, a Action) ([]Event, error) {
 	switch a := a.(type) {

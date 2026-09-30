@@ -17,6 +17,41 @@ import (
 //go:embed migrations/*.sql
 var files embed.FS
 
+// Pending returns how many embedded migrations are not applied with their
+// current checksum. A server must not take traffic while it is above zero.
+func Pending(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+	names, err := fs.Glob(files, "migrations/*.up.sql")
+	if err != nil {
+		return 0, err
+	}
+	rows, err := pool.Query(ctx, "SELECT version, checksum FROM schema_migrations")
+	if err != nil {
+		return 0, err
+	}
+	applied, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) ([2]string, error) {
+		var v [2]string
+		return v, row.Scan(&v[0], &v[1])
+	})
+	if err != nil {
+		return 0, err
+	}
+	have := map[string]string{}
+	for _, a := range applied {
+		have[a[0]] = a[1]
+	}
+	pending := 0
+	for _, name := range names {
+		body, err := files.ReadFile(name)
+		if err != nil {
+			return 0, err
+		}
+		if have[name] != fmt.Sprintf("%x", sha256.Sum256(body)) {
+			pending++
+		}
+	}
+	return pending, nil
+}
+
 func Migrate(ctx context.Context, pool *pgxpool.Pool, down bool) error {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {

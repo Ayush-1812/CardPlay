@@ -5,6 +5,7 @@ import (
 	"cardplay/internal/game"
 	"cardplay/internal/httpx"
 	"cardplay/internal/matches"
+	"cardplay/internal/obs"
 	"cardplay/internal/rooms"
 	"cardplay/internal/store"
 	"context"
@@ -18,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -73,6 +75,19 @@ type Hub struct {
 	Origin  string
 	mu      sync.Mutex
 	clients map[*client]bool
+	// listening reports whether the outbox LISTEN connection is active;
+	// without it this instance cannot deliver live updates.
+	listening atomic.Bool
+}
+
+// Listening reports whether live change notifications are being received.
+func (h *Hub) Listening() bool { return h.listening.Load() }
+
+// Connections returns the number of open WebSocket connections.
+func (h *Hub) Connections() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.clients)
 }
 
 func New(db *pgxpool.Pool, rm *rooms.Module, ch *chat.Module, mt *matches.Module, origin string) *Hub {
@@ -116,6 +131,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.mu.Unlock()
 	if count >= 5 {
+		obs.RateLimited.Inc("websocket_connections")
 		httpx.Error(w, r, 429, "RATE_LIMITED", "Too many active connections")
 		return
 	}
@@ -162,6 +178,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err == nil {
+				obs.StatePushes.Inc()
 				h.queue(c, outbound{Version: 1, Type: "match.state", MatchID: match, Payload: st})
 			}
 		}
@@ -226,12 +243,14 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		messages++
 		if messages > 30 {
+			obs.RateLimited.Inc("websocket")
 			_ = conn.Close(websocket.StatusPolicyViolation, "Rate limit")
 			return
 		}
 		sendError := func(code, message string) {
 			h.queue(c, outbound{Version: 1, Type: "error", ID: in.ID, Payload: map[string]string{"code": code, "message": message}})
 		}
+		obs.WSMessages.Inc(messageType(in.Type))
 		if in.Version != 1 || !httpx.UUID(in.ID) {
 			sendError("INVALID_REQUEST", "Use v=1 and a UUID request id")
 			continue
@@ -336,7 +355,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				sendError("INVALID_REQUEST", "Invalid command payload")
 				continue
 			}
+			started := time.Now()
 			ack, err := h.Matches.Execute(ctx, match, c.actor, gen, game.Command{ID: cmd.CommandID, ExpectedRevision: cmd.ExpectedRevision, Kind: cmd.Kind, Payload: cmd.Payload})
+			obs.GameCommandDuration.Observe(time.Since(started).Seconds())
+			obs.GameCommands.Inc(commandResult(err))
 			if errors.Is(err, matches.ErrReplaced) {
 				_ = conn.Close(closeReplaced, "Opened in another tab")
 				return
@@ -355,6 +377,41 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// messageType bounds metric label values to the known protocol.
+func messageType(t string) string {
+	switch t {
+	case "ping", "room.subscribe", "chat.send", "match.subscribe", "match.resync", "game.command":
+		return t
+	}
+	return "unknown"
+}
+
+func commandResult(err error) string {
+	var me *matches.Error
+	switch {
+	case err == nil:
+		return "applied"
+	case !errors.As(err, &me):
+		return "error"
+	case me.Code == "STALE_REVISION":
+		return "stale"
+	case me.Code == "IDEMPOTENCY_CONFLICT":
+		return "duplicate_conflict"
+	case me.Status == 422:
+		return "rule_rejected"
+	}
+	return "refused"
+}
+
+func notificationKind(k string) string {
+	switch k {
+	case "room.updated", "chat.updated", "match.updated":
+		return k
+	}
+	return "other"
+}
+
 func (h *Hub) queue(c *client, msg outbound) {
 	select {
 	case c.send <- msg:
@@ -460,6 +517,8 @@ func (h *Hub) listenOnce(ctx context.Context) (bool, error) {
 	if _, err = conn.Exec(ctx, "LISTEN cardplay_outbox"); err != nil {
 		return false, err
 	}
+	h.listening.Store(true)
+	defer h.listening.Store(false)
 	// Clients that subscribed before LISTEN took effect, at startup or during
 	// a listener reconnect, may have missed notifications: tell them to refetch.
 	h.broadcastSubscribed()
@@ -473,6 +532,7 @@ func (h *Hub) listenOnce(ctx context.Context) (bool, error) {
 			Kind   string `json:"kind"`
 		}
 		if json.Unmarshal([]byte(n.Payload), &event) == nil && event.RoomID != "" {
+			obs.Notifications.Inc(notificationKind(event.Kind))
 			h.broadcast(event.RoomID, event.Kind)
 		}
 	}

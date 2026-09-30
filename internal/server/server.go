@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"cardplay/db"
 	"cardplay/internal/accounts"
 	"cardplay/internal/chat"
 	"cardplay/internal/config"
@@ -9,6 +10,7 @@ import (
 	"cardplay/internal/game/monopoly"
 	"cardplay/internal/httpx"
 	"cardplay/internal/matches"
+	"cardplay/internal/obs"
 	"cardplay/internal/realtime"
 	"cardplay/internal/rooms"
 	"cardplay/internal/social"
@@ -19,6 +21,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -31,20 +34,24 @@ type App struct {
 	Hub     *realtime.Hub
 }
 
-func New(db *pgxpool.Pool, c config.Config) *App {
-	auth := &accounts.Module{DB: db, Config: c}
-	rm := &rooms.Module{DB: db}
-	friends := &social.Module{DB: db}
-	ch := &chat.Module{DB: db}
+func New(pool *pgxpool.Pool, c config.Config) *App {
+	auth := &accounts.Module{DB: pool, Config: c}
+	rm := &rooms.Module{DB: pool}
+	friends := &social.Module{DB: pool}
+	ch := &chat.Module{DB: pool}
 	games := game.NewRegistry(monopoly.Module{})
-	match := &matches.Module{DB: db, Games: games, Random: rand.Reader}
-	hub := realtime.New(db, rm, ch, match, c.Origin)
+	match := &matches.Module{DB: pool, Games: games, Random: rand.Reader}
+	hub := realtime.New(pool, rm, ch, match, c.Origin)
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.Recoverer)
+	r.Use(middleware.RequestID, obs.Instrument(), obs.Recover)
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
+			// API responses are JSON: nothing may frame, script or embed them.
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Referrer-Policy", "no-referrer")
 			if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" && r.Header.Get("Origin") != c.Origin {
 				httpx.Error(w, r, 403, "ORIGIN_REJECTED", "Request origin is not allowed")
 				return
@@ -53,15 +60,34 @@ func New(db *pgxpool.Pool, c config.Config) *App {
 		})
 	})
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) { httpx.JSON(w, 200, map[string]string{"status": "ok"}) })
+	// Readiness: the database answers, every embedded migration is applied
+	// with its current checksum, and live notifications are being received.
+	// Details stay generic; operators read the logs.
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if err := db.Ping(r.Context()); err != nil {
-			httpx.Error(w, r, 503, "NOT_READY", "Database unavailable")
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		checks := map[string]string{"database": "ok", "migrations": "ok", "notifications": "ok"}
+		ready := true
+		if err := pool.Ping(ctx); err != nil {
+			checks["database"], ready = "failing", false
+		}
+		if pending, err := db.Pending(ctx, pool); err != nil || pending > 0 {
+			checks["migrations"], ready = "pending", false
+		}
+		if !hub.Listening() {
+			checks["notifications"], ready = "failing", false
+		}
+		if !ready {
+			slog.Warn("readiness check failed", "checks", checks)
+			httpx.JSON(w, 503, map[string]any{"status": "not_ready", "checks": checks})
 			return
 		}
-		httpx.JSON(w, 200, map[string]string{"status": "ready"})
+		httpx.JSON(w, 200, map[string]any{"status": "ready", "checks": checks})
 	})
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(auth.Authenticate)
+		// Browser error reports; open to signed-out pages, small and rate limited.
+		r.With(newLimiter(30, time.Minute)).Post("/client-errors", clientError)
 		r.Get("/games", func(w http.ResponseWriter, r *http.Request) {
 			httpx.JSON(w, 200, map[string]any{"items": games.Catalog()})
 		})
@@ -142,6 +168,10 @@ type bucket struct {
 }
 
 func newLimiter(limit int, window time.Duration) func(http.Handler) http.Handler {
+	return newScopedLimiter("api", limit, window)
+}
+
+func newScopedLimiter(scope string, limit int, window time.Duration) func(http.Handler) http.Handler {
 	var mu sync.Mutex
 	entries := map[string]bucket{}
 	return func(next http.Handler) http.Handler {
@@ -162,6 +192,7 @@ func newLimiter(limit int, window time.Duration) func(http.Handler) http.Handler
 			b, exists := entries[key]
 			if !exists && len(entries) >= 4096 {
 				mu.Unlock()
+				obs.RateLimited.Inc(scope)
 				httpx.Error(w, r, 429, "RATE_LIMITED", "Try again later")
 				return
 			}
@@ -173,6 +204,7 @@ func newLimiter(limit int, window time.Duration) func(http.Handler) http.Handler
 			mu.Unlock()
 			if b.count > limit {
 				w.Header().Set("Retry-After", "60")
+				obs.RateLimited.Inc(scope)
 				httpx.Error(w, r, 429, "RATE_LIMITED", "Try again later")
 				return
 			}
@@ -191,7 +223,8 @@ func newLimiter(limit int, window time.Duration) func(http.Handler) http.Handler
 func newAuthLimiter(knownDevice func(ctx context.Context, token, email string) bool) func(http.Handler) http.Handler {
 	var mu sync.Mutex
 	entries := map[string]bucket{}
-	global := newLimiter(600, time.Minute)
+	global := newScopedLimiter("auth_global", 600, time.Minute)
+	const scope = "auth"
 	return func(next http.Handler) http.Handler {
 		return global(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			originalBody := r.Body
@@ -236,6 +269,7 @@ func newAuthLimiter(knownDevice func(ctx context.Context, token, email string) b
 			}
 			if _, exists := entries[key]; !exists && len(entries) >= 65536 {
 				mu.Unlock()
+				obs.RateLimited.Inc(scope)
 				httpx.Error(w, r, 429, "RATE_LIMITED", "Try again later")
 				return
 			}
@@ -248,10 +282,50 @@ func newAuthLimiter(knownDevice func(ctx context.Context, token, email string) b
 			mu.Unlock()
 			if b.count > limit {
 				w.Header().Set("Retry-After", "60")
+				obs.RateLimited.Inc(scope)
 				httpx.Error(w, r, 429, "RATE_LIMITED", "Try again later")
 				return
 			}
 			next.ServeHTTP(w, r)
 		}))
 	}
+}
+
+// clientError records an error reported by the browser. Only bounded,
+// sanitized fields are logged: never cookies, request bodies or query strings.
+func clientError(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Kind    string `json:"kind"`
+		Message string `json:"message"`
+		Page    string `json:"page"`
+		Stack   string `json:"stack"`
+		Digest  string `json:"digest"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	clip := func(s string, n int) string {
+		s = strings.ToValidUTF8(s, "?")
+		if len(s) > n {
+			s = s[:n]
+		}
+		return strings.ToValidUTF8(s, "")
+	}
+	page, _, _ := strings.Cut(clip(in.Page, 200), "?")
+	page, _, _ = strings.Cut(page, "#")
+	switch in.Kind {
+	case "error", "unhandledrejection", "render":
+	default:
+		in.Kind = "other"
+	}
+	obs.ClientErrors.Inc()
+	slog.Warn("client_error",
+		"request_id", middleware.GetReqID(r.Context()),
+		"kind", in.Kind,
+		"message", clip(in.Message, 500),
+		"page", page,
+		"stack", clip(in.Stack, 2000),
+		"digest", clip(in.Digest, 64),
+	)
+	w.WriteHeader(204)
 }

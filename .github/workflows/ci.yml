@@ -25,13 +25,15 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Formatting
-        run: test -z "$(gofmt -l cmd internal db)"
+        run: test -z "$(gofmt -l cmd internal db scripts)"
       - name: Static checks
-        run: go vet ./cmd/... ./internal/... ./db/...
-      - name: Unit and database integration tests
-        run: go test ./cmd/... ./internal/... ./db/...
+        run: go vet ./cmd/... ./internal/... ./db/... ./scripts/...
+      - name: Unit, database integration and migration up/down tests (race detector)
+        run: go test -race ./cmd/... ./internal/... ./db/...
       - name: Build
         run: go build ./cmd/cardplay
+      - name: Known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Check sqlc output
         run: |
           docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.31.1 generate
@@ -49,7 +51,56 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    services:
+      postgres:
+        image: postgres:18.6-bookworm
+        env:
+          POSTGRES_USER: cardplay
+          POSTGRES_PASSWORD: test_password_only
+          POSTGRES_DB: cardplay_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cardplay -d cardplay_e2e"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      mail:
+        image: axllent/mailpit:v1.31.3
+        ports: ["1026:1025", "8026:8025"]
+    env:
+      DATABASE_URL: postgres://cardplay:test_password_only@127.0.0.1:5432/cardplay_e2e?sslmode=disable
+      E2E_API_BIN: ${{ github.workspace }}/cardplay
+      E2E_WEB_DIR: ${{ github.workspace }}/web
+      E2E_CHANNEL: chromium
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.16.0'
+      - run: go build -o cardplay ./cmd/cardplay
+      - run: APP_ORIGIN=http://127.0.0.1:3100 ./cardplay migrate
+      - name: Build web against the test API
+        working-directory: web
+        run: npm ci && API_INTERNAL_URL=http://127.0.0.1:18080 npm run build
+      - name: Playwright
+        working-directory: scripts/e2e
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: scripts/e2e/playwright-report

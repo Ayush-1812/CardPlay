@@ -4,6 +4,7 @@ import (
 	"cardplay/db"
 	"cardplay/internal/accounts"
 	"cardplay/internal/config"
+	"cardplay/internal/obs"
 	"cardplay/internal/server"
 	"cardplay/internal/store"
 	"context"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -42,6 +44,7 @@ func run() error {
 		}
 		return nil
 	}
+	obs.SetupLogging(os.Getenv("APP_ENV"), os.Getenv("LOG_FORMAT"), os.Getenv("LOG_LEVEL"))
 	c, err := config.Load()
 	if err != nil {
 		return err
@@ -52,7 +55,7 @@ func run() error {
 	if err != nil {
 		return errors.New("invalid database connection configuration")
 	}
-	pc.MaxConns = 10
+	pc.MaxConns = c.DBMaxConns
 	pc.MinConns = 1
 	pc.ConnConfig.ConnectTimeout = 5 * time.Second
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
@@ -115,6 +118,31 @@ func run() error {
 	}
 	app := server.New(pool, c)
 	go app.Hub.Run(ctx)
+	started := time.Now()
+	obs.NewGauge("cardplay_ws_connections", "Open WebSocket connections on this instance.", func() float64 { return float64(app.Hub.Connections()) })
+	obs.NewGauge("cardplay_notifications_listening", "1 while the PostgreSQL change listener is active.", func() float64 {
+		if app.Hub.Listening() {
+			return 1
+		}
+		return 0
+	})
+	obs.NewGauge("cardplay_db_pool_acquired_connections", "Pool connections in use.", func() float64 { return float64(pool.Stat().AcquiredConns()) })
+	obs.NewGauge("cardplay_db_pool_idle_connections", "Idle pool connections.", func() float64 { return float64(pool.Stat().IdleConns()) })
+	obs.NewGauge("cardplay_db_pool_max_connections", "Configured pool size.", func() float64 { return float64(pool.Stat().MaxConns()) })
+	obs.NewGauge("cardplay_db_pool_empty_acquire_total", "Acquires that had to wait for a connection.", func() float64 { return float64(pool.Stat().EmptyAcquireCount()) })
+	obs.NewGauge("cardplay_db_pool_acquire_wait_seconds_total", "Total time spent waiting for pool connections.", func() float64 { return pool.Stat().AcquireDuration().Seconds() })
+	obs.NewGauge("cardplay_goroutines", "Goroutines in this process.", func() float64 { return float64(runtime.NumGoroutine()) })
+	obs.NewGauge("cardplay_uptime_seconds", "Seconds since this process started serving.", func() float64 { return time.Since(started).Seconds() })
+	if c.MetricsAddress != "" {
+		metrics := &http.Server{Addr: c.MetricsAddress, Handler: obs.Handler(), ReadHeaderTimeout: 5 * time.Second}
+		go func() {
+			slog.Info("metrics listening", "address", c.MetricsAddress)
+			if err := metrics.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("metrics listener failed", "error", err.Error())
+			}
+		}()
+		defer func() { _ = metrics.Close() }()
+	}
 	srv := &http.Server{Addr: c.Address, Handler: app.Handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	done := make(chan error, 1)
 	go func() {

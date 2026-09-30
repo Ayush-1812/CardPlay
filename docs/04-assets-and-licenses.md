@@ -36,7 +36,7 @@ The exhaustive [reference-assets.csv](evidence/reference-assets.csv) records **1
 | Space Mono | Obtain font directly; retain OFL and copyright | [Space Mono OFL](https://raw.githubusercontent.com/google/fonts/main/ofl/spacemono/OFL.txt), SIL OFL 1.1. |
 | Noto Sans Devanagari/Bengali/Tamil/Telugu, Noto Naskh Arabic, Noto Nastaliq Urdu | Referenced remotely in CSS; not required for English v1 | Specific font distributions/licenses not verified in this audit. Obtain and record them if localization needs them. |
 
-The three verified fonts can be embedded subject to their terms; include notices and respect reserved-name restrictions on modifications. Original CardPlay artwork and newly written UI code can be created without importing the unlicensed reference files.
+The three verified fonts can be embedded subject to their terms; include notices and respect reserved-name restrictions on modifications. **In use (30 September 2026):** the web client loads Outfit, DM Sans and Space Mono unmodified through `next/font/google`, which self-hosts the Google Fonts distribution at build time; list their OFL notices on the third-party notices page. The match table (`web/src/components/table/`, `web/src/app/table.css`) follows the reference project's visual design but is independently written; no reference code, CSS, SVG, icons, sounds or branding were copied. Original CardPlay artwork and newly written UI code can be created without importing the unlicensed reference files.
 
 ## Software dependencies
 

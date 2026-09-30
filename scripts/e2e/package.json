@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "match": "node match-e2e.mjs"
+    "test": "playwright test"
   },
-  "dependencies": {
-    "puppeteer-core": "24.43.1"
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
   }
 }

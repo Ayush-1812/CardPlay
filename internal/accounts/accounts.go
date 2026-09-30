@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/mail"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
 	"cardplay/internal/config"
 	"cardplay/internal/httpx"
 	"cardplay/internal/matches"
+	"cardplay/internal/obs"
 	"cardplay/internal/rooms"
 	"cardplay/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -47,9 +49,19 @@ type Module struct {
 
 var handlePattern = regexp.MustCompile(`^[a-z0-9_]{3,24}$`)
 
+// Each Argon2id hash uses 64 MiB. Hashing runs at most one per CPU so a
+// burst of logins queues briefly instead of exhausting memory.
+var hashSlots = make(chan struct{}, max(1, runtime.NumCPU()))
+
+func argon(password, salt []byte) []byte {
+	hashSlots <- struct{}{}
+	defer func() { <-hashSlots }()
+	return argon2.IDKey(password, salt, 2, 64*1024, 2, 32)
+}
+
 func PasswordHash(password string) string {
 	salt := httpx.Token()
-	b := argon2.IDKey([]byte(password), []byte(salt), 2, 64*1024, 2, 32)
+	b := argon([]byte(password), []byte(salt))
 	return salt + ":" + base64.RawStdEncoding.EncodeToString(b)
 }
 func PasswordMatches(encoded, password string) bool {
@@ -57,7 +69,7 @@ func PasswordMatches(encoded, password string) bool {
 	if len(parts) != 2 {
 		return false
 	}
-	got := argon2.IDKey([]byte(password), []byte(parts[0]), 2, 64*1024, 2, 32)
+	got := argon([]byte(password), []byte(parts[0]))
 	want, err := base64.RawStdEncoding.DecodeString(parts[1])
 	return err == nil && subtle.ConstantTimeCompare(want, got) == 1
 }
@@ -86,9 +98,10 @@ func (m *Module) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 	in.Handle = strings.ToLower(strings.TrimSpace(in.Handle))
-	in.DisplayName = strings.TrimSpace(in.DisplayName)
+	displayName, nameOK := httpx.CleanText(in.DisplayName, 60)
+	in.DisplayName = displayName
 	address, err := mail.ParseAddress(in.Email)
-	if err != nil || address.Address != in.Email || len(in.Email) > 254 || !handlePattern.MatchString(in.Handle) || len([]rune(in.DisplayName)) < 1 || len([]rune(in.DisplayName)) > 60 || len(in.Password) < 12 || len(in.Password) > 128 {
+	if err != nil || address.Address != in.Email || len(in.Email) > 254 || !handlePattern.MatchString(in.Handle) || !nameOK || len(in.Password) < 12 || len(in.Password) > 128 {
 		httpx.Error(w, r, 400, "INVALID_REQUEST", "Use a valid email, 3-24 character handle, display name and 12-128 byte password")
 		return
 	}
@@ -208,6 +221,7 @@ func (m *Module) Login(w http.ResponseWriter, r *http.Request) {
 		hash = strings.Repeat("0", 64) + ":" + base64.RawStdEncoding.EncodeToString(make([]byte, 32))
 	}
 	if !PasswordMatches(hash, in.Password) || err != nil {
+		obs.Logins.Inc("rejected")
 		httpx.Error(w, r, 401, "INVALID_CREDENTIALS", "Invalid email or password")
 		return
 	}
@@ -224,6 +238,7 @@ func (m *Module) Login(w http.ResponseWriter, r *http.Request) {
 	if err = q.CreateLoginDevice(r.Context(), store.CreateLoginDeviceParams{TokenHash: httpx.Hash(device), UserID: u.ID, ExpiresAt: time.Now().Add(DeviceTTL)}); err == nil {
 		http.SetCookie(w, &http.Cookie{Name: DeviceCookieName, Value: device, Path: "/api/v1/auth/login", HttpOnly: true, Secure: m.Config.SecureCookie, SameSite: http.SameSiteStrictMode, MaxAge: int(DeviceTTL.Seconds())})
 	}
+	obs.Logins.Inc("success")
 	httpx.JSON(w, 200, map[string]any{"id": u.ID, "handle": u.Handle, "display_name": u.DisplayName, "email_verified": u.EmailVerified})
 }
 func (m *Module) Logout(w http.ResponseWriter, r *http.Request) {
@@ -376,9 +391,9 @@ func (m *Module) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	in.DisplayName = strings.TrimSpace(in.DisplayName)
-	if n := len([]rune(in.DisplayName)); n < 1 || n > 60 {
-		httpx.Error(w, r, 400, "INVALID_REQUEST", "Display name must be 1-60 characters")
+	var ok bool
+	if in.DisplayName, ok = httpx.CleanText(in.DisplayName, 60); !ok {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Display name must be 1-60 characters without control characters")
 		return
 	}
 	if err := store.New(m.DB).ChangeDisplayName(r.Context(), store.ChangeDisplayNameParams{ID: httpx.Actor(r).ID, DisplayName: in.DisplayName}); err != nil {

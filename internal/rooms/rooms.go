@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -100,8 +99,8 @@ func (m *Module) Create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	in.Name = strings.TrimSpace(in.Name)
-	if len([]rune(in.Name)) < 1 || len([]rune(in.Name)) > 80 || in.Capacity < 2 || in.Capacity > 5 {
+	var ok bool
+	if in.Name, ok = httpx.CleanText(in.Name, 80); !ok || in.Capacity < 2 || in.Capacity > 5 {
 		httpx.Error(w, r, 400, "INVALID_REQUEST", "Name is required; capacity must be 2-5")
 		return
 	}

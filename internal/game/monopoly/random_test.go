@@ -154,12 +154,13 @@ func TestRandomGamesPreserveInvariants(t *testing.T) {
 			}
 			next, _, err := Apply(s, seat, a)
 			if err != nil {
+				var ie *InvariantError
+				if errors.As(err, &ie) {
+					t.Fatalf("game %d: %s broke an invariant: %s", g, a.Kind(), ie.Detail)
+				}
 				var re *RuleError
 				if !errors.As(err, &re) || next != s || (before != "" && snapshot(t, s) != before) {
 					t.Fatalf("game %d: bad rejection of %s: %v", g, a.Kind(), err)
-				}
-				if re.Code == CodeIllegal && len(re.Message) > 9 && re.Message[:9] == "rejected:" {
-					t.Fatalf("game %d: %s broke an invariant: %s", g, a.Kind(), re.Message)
 				}
 				rejectedCount++
 				continue

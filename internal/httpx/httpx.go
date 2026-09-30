@@ -11,6 +11,9 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5"
@@ -99,6 +102,24 @@ func Token() string {
 	return hex.EncodeToString(b)
 }
 func Hash(s string) string { b := sha256.Sum256([]byte(s)); return hex.EncodeToString(b[:]) }
+
+// CleanText trims user-visible text and checks it is 1..max characters of
+// valid UTF-8 without control characters or bidirectional overrides, which
+// could hide or reorder what other players see.
+func CleanText(s string, max int) (string, bool) {
+	s = strings.TrimSpace(s)
+	if !utf8.ValidString(s) {
+		return s, false
+	}
+	n := 0
+	for _, r := range s {
+		n++
+		if unicode.IsControl(r) || (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069) {
+			return s, false
+		}
+	}
+	return s, n >= 1 && n <= max
+}
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 

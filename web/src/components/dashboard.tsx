@@ -250,7 +250,7 @@ export function Dashboard() {
     });
     observer.observe(panel);
     return () => observer.disconnect();
-  }, [selected, view]);
+  }, [selected, view, match?.status]);
 
   useEffect(() => {
     const log = chatLog.current;
@@ -523,6 +523,147 @@ export function Dashboard() {
   const roomFull = !!view && view.members.length >= view.room.capacity;
   const activeCreatedInvites = createdInvites.filter(
     (invite) => !invite.revoked_at && !invite.accepted_at,
+  );
+
+  // Shared between the page and the full-screen table.
+  const chatSection =
+    selected && user ? (
+      <section className="panel chat-panel" ref={chatPanel}>
+        <div className="section-heading">
+          <h2>At the table</h2>
+          <span className="muted">Room chat</span>
+        </div>
+        <div
+          className="chat-log"
+          ref={chatLog}
+          role="log"
+          aria-live="polite"
+          aria-label="Room chat"
+        >
+          {chat.length === 0 ? (
+            <p className="empty">Say hello. The table is yours.</p>
+          ) : (
+            chat.map((msg) => (
+              <div className="message" key={msg.id}>
+                <strong>{msg.display_name}</strong>
+                <time>
+                  {new Date(msg.created_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </time>
+                <p>{msg.body}</p>
+                {msg.user_id !== user.id && (
+                  <span className="message-tools">
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          const reason = window.prompt(
+                            "Why are you reporting this message?",
+                          );
+                          if (!reason?.trim()) return;
+                          await api(
+                            `/rooms/${selected}/chat/${msg.id}/report`,
+                            "POST",
+                            { reason: reason.trim().slice(0, 500) },
+                          );
+                          setNotice("Message reported. Thank you.");
+                        })
+                      }
+                    >
+                      Report
+                    </button>
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          await api(`/mutes/${msg.user_id}`, "PUT");
+                          await Promise.all([
+                            refresh(),
+                            loadChat(selected, true),
+                          ]);
+                          setNotice(
+                            `${msg.display_name} is muted. Unmute them under Better with friends.`,
+                          );
+                        })
+                      }
+                    >
+                      Mute
+                    </button>
+                  </span>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+        <form
+          className="chat-form"
+          onSubmit={(event) =>
+            submit(event, async (data, form) => {
+              const body = String(data.get("body"));
+              if (chatDraft.current?.body !== body)
+                chatDraft.current = { body, id: crypto.randomUUID() };
+              await api(`/rooms/${selected}/chat`, "POST", {
+                body,
+                client_id: chatDraft.current.id,
+              });
+              chatDraft.current = null;
+              form.reset();
+              // Show the message even if the socket is reconnecting.
+              await loadChat(selected, false);
+            })
+          }
+        >
+          <label className="sr-only" htmlFor="chat-body">
+            Message
+          </label>
+          <input
+            id="chat-body"
+            name="body"
+            required
+            maxLength={500}
+            placeholder="Send a little table talk…"
+          />
+          <button className="primary" disabled={busy}>
+            Send
+          </button>
+        </form>
+      </section>
+    ) : null;
+  const alertsSection = (
+    <>
+      {error && (
+        <div className="alert" role="alert">
+          {error}
+          <button aria-label="Dismiss error" onClick={() => setError("")}>
+            ×
+          </button>
+        </div>
+      )}
+      {notice && (
+        <div className="notice" role="status">
+          {notice}
+        </div>
+      )}
+      {replaced && (
+        <div className="notice" role="status">
+          This match is open in another tab or window, which now controls your
+          seat.{" "}
+          <button
+            className="text-button"
+            onClick={() => {
+              setReplaced(false);
+              setSocketNonce((n) => n + 1);
+            }}
+          >
+            Play here instead
+          </button>
+        </div>
+      )}
+    </>
   );
 
   return (
@@ -920,7 +1061,7 @@ export function Dashboard() {
                 </div>
                 <span className="pill">{connection}</span>
               </div>
-              {replaced && (
+              {replaced && !showTable && (
                 <div className="notice" role="status">
                   This match is open in another tab or window, which now
                   controls your seat.{" "}
@@ -961,6 +1102,11 @@ export function Dashboard() {
                       me={user.id}
                       cards={cards}
                       busy={gameBusy || replaced}
+                      roomName={view?.room.name}
+                      connection={connection}
+                      alerts={alertsSection}
+                      chat={chatSection}
+                      unread={unread}
                       onCommand={command}
                       onLeave={() =>
                         void run(async () => {
@@ -1314,110 +1460,7 @@ export function Dashboard() {
                     ))}
                   </section>
                 )}
-                <section className="panel chat-panel" ref={chatPanel}>
-                  <div className="section-heading">
-                    <h2>At the table</h2>
-                    <span className="muted">Room chat</span>
-                  </div>
-                  <div
-                    className="chat-log"
-                    ref={chatLog}
-                    role="log"
-                    aria-live="polite"
-                    aria-label="Room chat"
-                  >
-                    {chat.length === 0 ? (
-                      <p className="empty">Say hello. The table is yours.</p>
-                    ) : (
-                      chat.map((msg) => (
-                        <div className="message" key={msg.id}>
-                          <strong>{msg.display_name}</strong>
-                          <time>
-                            {new Date(msg.created_at).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </time>
-                          <p>{msg.body}</p>
-                          {msg.user_id !== user.id && (
-                            <span className="message-tools">
-                              <button
-                                className="text-button"
-                                disabled={busy}
-                                onClick={() =>
-                                  void run(async () => {
-                                    const reason = window.prompt(
-                                      "Why are you reporting this message?",
-                                    );
-                                    if (!reason?.trim()) return;
-                                    await api(
-                                      `/rooms/${selected}/chat/${msg.id}/report`,
-                                      "POST",
-                                      { reason: reason.trim().slice(0, 500) },
-                                    );
-                                    setNotice("Message reported. Thank you.");
-                                  })
-                                }
-                              >
-                                Report
-                              </button>
-                              <button
-                                className="text-button"
-                                disabled={busy}
-                                onClick={() =>
-                                  void run(async () => {
-                                    await api(`/mutes/${msg.user_id}`, "PUT");
-                                    await Promise.all([
-                                      refresh(),
-                                      loadChat(selected, true),
-                                    ]);
-                                    setNotice(
-                                      `${msg.display_name} is muted. Unmute them under Better with friends.`,
-                                    );
-                                  })
-                                }
-                              >
-                                Mute
-                              </button>
-                            </span>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <form
-                    className="chat-form"
-                    onSubmit={(event) =>
-                      submit(event, async (data, form) => {
-                        const body = String(data.get("body"));
-                        if (chatDraft.current?.body !== body)
-                          chatDraft.current = { body, id: crypto.randomUUID() };
-                        await api(`/rooms/${selected}/chat`, "POST", {
-                          body,
-                          client_id: chatDraft.current.id,
-                        });
-                        chatDraft.current = null;
-                        form.reset();
-                        // Show the message even if the socket is reconnecting.
-                        await loadChat(selected, false);
-                      })
-                    }
-                  >
-                    <label className="sr-only" htmlFor="chat-body">
-                      Message
-                    </label>
-                    <input
-                      id="chat-body"
-                      name="body"
-                      required
-                      maxLength={500}
-                      placeholder="Send a little table talk…"
-                    />
-                    <button className="primary" disabled={busy}>
-                      Send
-                    </button>
-                  </form>
-                </section>
+                {!showTable && chatSection}
               </div>
             </>
           ) : (
