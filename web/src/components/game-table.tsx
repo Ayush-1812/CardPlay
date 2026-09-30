@@ -68,29 +68,38 @@ function initial(name: string) {
 }
 
 // Destinations a property card may go to: an own set of a legal color with
-// room, a new set of a legal color, or unassigned for a multicolor wild.
+// room, a new set of a legal color, or unassigned for a multicolor wild. The
+// first option is the default: the own set closest to completion, otherwise
+// a new set (or, for a multicolor wild, unassigned, since a set of only
+// multicolor wilds earns nothing).
 function destinations(card: CardInfo, sets: PropertySet[], ownSetID?: string) {
   const colors: Color[] =
     card.kind === "rainbow_wild" ? COLORS : (card.colors ?? []);
   const options: { value: string; label: string }[] = [];
-  for (const set of sets) {
-    if (
-      colors.includes(set.color) &&
-      (set.id === ownSetID || set.cards.length < SET_SIZE[set.color])
-    ) {
-      options.push({
-        value: `set:${set.id}`,
-        label: `${COLOR_NAMES[set.color]} set (${set.cards.length}/${SET_SIZE[set.color]})`,
-      });
-    }
-  }
+  const fits = sets
+    .filter(
+      (set) =>
+        colors.includes(set.color) &&
+        (set.id === ownSetID || set.cards.length < SET_SIZE[set.color]),
+    )
+    .sort(
+      (x, y) =>
+        SET_SIZE[x.color] -
+        x.cards.length -
+        (SET_SIZE[y.color] - y.cards.length),
+    );
+  for (const set of fits)
+    options.push({
+      value: `set:${set.id}`,
+      label: `${COLOR_NAMES[set.color]} set (${set.cards.length}/${SET_SIZE[set.color]})`,
+    });
+  if (card.kind === "rainbow_wild")
+    options.push({ value: "unassigned", label: "Unassigned (no color yet)" });
   for (const color of colors)
     options.push({
       value: `new:${color}`,
       label: `New ${COLOR_NAMES[color]} set`,
     });
-  if (card.kind === "rainbow_wild")
-    options.push({ value: "unassigned", label: "Unassigned (no color yet)" });
   return options;
 }
 
@@ -1125,7 +1134,7 @@ export function GameTable({
   state,
   me,
   cards,
-  busy,
+  busy: busyProp,
   onCommand,
   onLeave,
   onVote,
@@ -1144,10 +1153,24 @@ export function GameTable({
   const [pinnedOpp, setPinnedOpp] = useState<number | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [promptHidden, setPromptHidden] = useState(false);
+  // One-second tick for the turn clock.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
+  // While the socket is down a move cannot reach the server, so every game
+  // control is locked until the table reconnects.
+  const offline = connection !== undefined && connection !== "Connected";
+  const busy = busyProp || offline;
   const people = new Map(state.participants.map((p) => [p.seat, p]));
   const name = (seat: number) => {
     const p = people.get(seat);
     return p ? (p.user_id === me ? "You" : p.display_name) : `Seat ${seat + 1}`;
+  };
+  const userName = (id: string) => {
+    const p = state.participants.find((x) => x.user_id === id);
+    return p ? (p.user_id === me ? "You" : p.display_name) : "A player";
   };
   const live = state.status === "playing" || state.status === "paused";
   if (!live) return <ResultView state={state} cards={cards} name={name} />;
@@ -1176,7 +1199,7 @@ export function GameTable({
   });
   const tableWidth = wide ? 88 : 76;
   const log = state.events
-    .map((e) => ({ e, text: describeEvent(e, cards, name) }))
+    .map((e) => ({ e, text: describeEvent(e, cards, name, userName) }))
     .filter((x) => x.text)
     .slice(-12)
     .reverse();
@@ -1257,7 +1280,7 @@ export function GameTable({
       ids={hand}
       cards={cards}
       selected={selectedCard}
-      disabled={!myTurn || pub.plays_left === 0}
+      disabled={!myTurn || pub.plays_left === 0 || offline}
       layout={wide ? "fan" : "rail"}
       onSelect={(id) => setSelected(selectedCard === id ? null : id)}
     />
@@ -1267,6 +1290,25 @@ export function GameTable({
     if (hand.length > 7) setReturning(true);
     else void onCommand("end_turn", {});
   };
+  // Turn clock: when it runs out the server makes the default move for
+  // whoever the game is waiting on.
+  const secondsLeft =
+    playing && state.turn_seconds_left != null && state.received_at != null
+      ? Math.max(
+          0,
+          Math.ceil(state.turn_seconds_left - (now - state.received_at) / 1000),
+        )
+      : null;
+  const clock = secondsLeft != null && pub.waiting_for.length > 0 && (
+    <span
+      className={`turn-clock ${secondsLeft <= 20 ? "urgent" : ""}`}
+      aria-hidden="true"
+      title="When time runs out, the table makes a default move: end the turn, accept, pay or place."
+    >
+      ⏱ {waiting ? "You" : pub.waiting_for.map(name).join(", ")}{" "}
+      {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}
+    </span>
+  );
   const turnPill = (
     <div className={`turn-pill ${myTurn ? "yours" : ""}`}>
       <b>
@@ -1285,7 +1327,11 @@ export function GameTable({
   );
   const turnActions = myTurn && (
     <div className="platter-actions">
-      <button className="btn-ghost small" onClick={() => setReorganizing(true)}>
+      <button
+        className="btn-ghost small"
+        disabled={busy}
+        onClick={() => setReorganizing(true)}
+      >
         Reorganize properties
       </button>
       <button className="btn-gold" disabled={busy} onClick={endTurn}>
@@ -1353,6 +1399,17 @@ export function GameTable({
           Turn {pub.turn} · draw pile {pub.draw_count} · center{" "}
           {pub.center_pile.length}
         </span>
+        {clock}
+        {waiting && secondsLeft !== null && secondsLeft <= 20 && (
+          <span className="sr-only">
+            Less than 20 seconds left before the table moves for you.
+          </span>
+        )}
+        {offline && playing && (
+          <span className="table-offline">
+            Reconnecting. Your moves are paused until the table is back.
+          </span>
+        )}
       </div>
 
       <nav className="opp-rail" aria-label="Opponents">
@@ -1522,11 +1579,12 @@ export function GameTable({
         inert={!chatOpen}
       >
         <button
-          className="dialog-close"
+          className="dialog-close chat-close"
           aria-label="Close chat"
           onClick={() => setChatOpen(false)}
         >
-          ×
+          <span className="chat-close-x">×</span>
+          <span className="chat-close-text">← Back to table</span>
         </button>
         {chat}
       </aside>

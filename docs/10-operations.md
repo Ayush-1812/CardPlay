@@ -10,6 +10,7 @@ This is for whoever deploys and runs CardPlay. The release gate is in [11-releas
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Health probes log at `debug`. |
 | `METRICS_ADDR` | unset (off) | `host:port` for a separate `/metrics` listener. It is **not authenticated**: bind it to a private interface (for example `127.0.0.1:9090` or the pod IP) and never expose it publicly. |
 | `DB_MAX_CONNS` | `20` | PostgreSQL pool size per API instance (4–200). Keep `instances × (DB_MAX_CONNS + 1)` below the server's `max_connections`. The `+1` is the dedicated LISTEN connection. |
+| `MATCH_TURN_TIMEOUT` | `2m` | How long a match waits for a connected, awaited player before the server makes the default move for them (15s–1h, or `0` to turn it off). See [09-multiplayer-and-recovery.md](09-multiplayer-and-recovery.md). |
 | `ENABLE_HSTS` (web build) | unset | Set to `1` when building the web image for an HTTPS-only domain. |
 
 ## Logs
@@ -92,7 +93,12 @@ Findings and fixes:
 - **Password hashing is CPU-bound by design.** Argon2id (64 MiB, 2 passes) costs about 59 ms per hash, so this machine peaks near 30 logins/s. Concurrent hashes are now capped at the CPU count so a login burst cannot exhaust memory (200 × 64 MiB). 200 simultaneous logins took up to 8 s; spread over 10 s, 400 logins had p95 2.1 s.
 - **Site-wide auth ceiling.** Behind the Next.js proxy all auth requests share one limiter key, capped at 600 per minute. That is ample for a small launch but must be revisited before a large one.
 - **Windows accept backlog.** 400 simultaneous TCP connects exceeded the Windows accept backlog (~200) and were refused before reaching Go. Linux defaults to 4096 (`net.core.somaxconn`); keep that on production hosts.
-- **Next optimization.** Each state push reads the match with 7 round trips per viewer, so each command costs about 4 × 7 queries in a 4-player match. Consolidating that read is the next step if `db_pool_acquire_wait` grows in production.
+- **State push cost (fixed 2026-09-30).** Each player's update used to take 7 database round trips: a read-only transaction plus five queries. It is now one SQL statement, and the result is still one consistent snapshot. `BenchmarkStateFor` in `internal/matches` compares both with 64 concurrent readers on a 20-connection pool:
+  - Database on the same machine: no measurable difference (about 0.35–0.6 ms each, within noise).
+  - Simulated 1 ms network round trip (`BENCH_RTT=1ms`), as with a database on another host: **1.55 ms → 0.57 ms per update (about 2.7× faster)**, and each read holds a pool connection for one round trip instead of seven.
+  
+  A repeat of the 400-socket load test after the change was not comparable: this laptop was busy with other work, so logins were also 3× slower and that code didn't change. Its numbers aren't used here.
+- **Timeout sweep cost.** The turn-timeout check is an indexed query every 5 s (`matches_awaiting_idx`, playing matches only). Default moves use the same locked transaction as player commands.
 
 ## Backup and recovery
 
@@ -163,7 +169,7 @@ Repeat the drill every quarter and after any schema change.
 - **Deploy.** Run `cardplay migrate` once (it takes an advisory lock, so concurrent runs are safe), then roll the API instances. A restarted instance loses no acknowledged command. Clients reconnect with backoff and resynchronize. Matches pause while a seat is disconnected and resume on reconnect.
 - **Rollback.** Migrations roll back one step at a time with `cardplay migrate-down`, which is disabled in production. Test down migrations in staging (CI checks up/down/up on every change). In production, prefer a forward fix or a restore.
 - **Background jobs.** These run inside every API instance:
-  - every 5 s: host transfer and match presence sweeps;
+  - every 5 s: host transfer, match presence sweeps and turn timeouts;
   - hourly: purge of expired chat, outbox, sessions and login devices, and match retention (90 days).
   
   No separate worker is needed.

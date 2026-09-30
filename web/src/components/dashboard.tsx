@@ -374,7 +374,12 @@ export function Dashboard() {
           syncMatch(message.payload as RoomView);
         }
         if (message.type === "match.state" && message.payload) {
-          const next = message.payload as MatchState;
+          // Stamp arrival so the turn clock counts down locally without
+          // depending on the client's clock matching the server's.
+          const next = {
+            ...(message.payload as MatchState),
+            received_at: Date.now(),
+          };
           // Pushes may overtake each other; keep the newest version.
           setMatch((current) =>
             !current ||

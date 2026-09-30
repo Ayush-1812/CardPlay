@@ -262,6 +262,10 @@ export type MatchState = {
   participants: Participant[];
   can_vote_abandon: boolean;
   vote_opens_at?: string;
+  // Seconds until the server plays the awaited player's default move, as of
+  // received_at (set by the client when the state arrives).
+  turn_seconds_left?: number;
+  received_at?: number;
   view: {
     public: PublicView;
     self: { seat: number; hand: string[] };
@@ -301,6 +305,7 @@ export function describeEvent(
   e: MatchEvent,
   cards: Cards,
   name: (seat: number) => string,
+  userName: (userID: string) => string = () => "A player",
 ): string | null {
   const d = e.payload as Record<string, never>;
   const seat = d.seat as number;
@@ -308,6 +313,8 @@ export function describeEvent(
   switch (e.kind) {
     case "game_started":
       return `Cards dealt. ${name(d.first_seat)} goes first.`;
+    case "timed_out":
+      return `${userName(d.user_id)} ran out of time, so the table made the default move for them.`;
     case "turn_started":
       return `${name(seat)}'s turn begins.`;
     case "drew":

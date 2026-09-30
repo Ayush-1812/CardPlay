@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { startAPI, stopAPI } from "./api";
-import { createRoom, latestState, leaks, makeFriends, newPlayer, registerViaAPI, type Player } from "./helpers";
+import { createRoom, expectNoLeaks, latestState, makeFriends, newPlayer, registerViaAPI, type Player } from "./helpers";
 
 type Card = { id: string; kind: string; value: number };
 
@@ -86,7 +86,7 @@ test.describe.serial("a complete two-player match", () => {
       await expect(p.page.locator(".game-table")).toBeVisible();
       await expect.poll(() => latestState(p)?.status).toBe("playing");
     }
-    expect(leaks([host, guest])).toEqual([]);
+    await expectNoLeaks([host, guest]);
   });
 
   test("chat during the match shows an unread count", async () => {
@@ -96,10 +96,11 @@ test.describe.serial("a complete two-player match", () => {
     await expect(host.page.locator(".chat-toggle .unread-badge")).toHaveText(/1 new chat message/);
     await host.page.locator(".chat-toggle").click();
     await expect(host.page.locator(".chat-drawer.open").getByText("good luck")).toBeVisible();
-    for (const p of [host, guest]) {
-      await p.page.getByRole("button", { name: "Close chat" }).click();
-      await expect(p.page.locator(".chat-drawer.open")).toHaveCount(0);
-    }
+    // The Chat button stays reachable above the open drawer and closes it;
+    // the drawer's own close button works too.
+    await host.page.locator(".chat-toggle").click();
+    await guest.page.getByRole("button", { name: "Close chat" }).click();
+    for (const p of [host, guest]) await expect(p.page.locator(".chat-drawer.open")).toHaveCount(0);
   });
 
   test("refresh returns to the same seat and hand", async () => {
@@ -142,6 +143,13 @@ test.describe.serial("a complete two-player match", () => {
     const revision = latestState(host).revision;
     await stopAPI();
     await expect(host.page.locator(".table-conn")).toHaveText("Reconnecting");
+    // While disconnected, moves are locked and the table says why.
+    for (const p of [host, guest]) {
+      await expect(p.page.locator(".table-offline")).toBeVisible();
+      for (const card of await p.page.locator(".hand-card").all()) await expect(card).toBeDisabled();
+      const endTurn = p.page.locator(".platter-actions").getByRole("button", { name: "End turn" });
+      if (await endTurn.count()) await expect(endTurn).toBeDisabled();
+    }
     const seen = [host, guest].map((p) => p.frames.length);
     await startAPI(process.env.E2E_BASE!);
     for (const [i, p] of [host, guest].entries()) {
@@ -173,7 +181,7 @@ test.describe.serial("a complete two-player match", () => {
     expect(final.status, "the match should end with a winner within 200 turns").toBe("finished");
     const winner = final.participants.find((x: { user_id: string }) => x.user_id === final.winner_id);
     for (const p of players) await expect(p.page.locator(".game-status.result")).toContainText(`${winner.display_name} won with three full sets`);
-    expect(leaks(players)).toEqual([]);
+    await expectNoLeaks(players);
     for (const p of players) expect(p.errors, `${p.name} page errors`).toEqual([]);
   });
 });

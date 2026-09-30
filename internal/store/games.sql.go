@@ -43,7 +43,7 @@ func (q *Queries) LatestSnapshot(ctx context.Context, matchID string) (GameSnaps
 }
 
 const match = `-- name: Match :one
-SELECT id, room_id, game_id, rules_version, status, revision, winner_id, created_at, finished_at, version, end_reason, ended_by FROM matches WHERE id=$1
+SELECT id, room_id, game_id, rules_version, status, revision, winner_id, created_at, finished_at, version, end_reason, ended_by, awaiting_since FROM matches WHERE id=$1
 `
 
 func (q *Queries) Match(ctx context.Context, id string) (Match, error) {
@@ -62,6 +62,7 @@ func (q *Queries) Match(ctx context.Context, id string) (Match, error) {
 		&i.Version,
 		&i.EndReason,
 		&i.EndedBy,
+		&i.AwaitingSince,
 	)
 	return i, err
 }

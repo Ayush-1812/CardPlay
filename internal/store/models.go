@@ -78,18 +78,19 @@ type LoginDevice struct {
 }
 
 type Match struct {
-	ID           string      `json:"id"`
-	RoomID       string      `json:"room_id"`
-	GameID       string      `json:"game_id"`
-	RulesVersion string      `json:"rules_version"`
-	Status       string      `json:"status"`
-	Revision     int64       `json:"revision"`
-	WinnerID     *string     `json:"winner_id"`
-	CreatedAt    time.Time   `json:"created_at"`
-	FinishedAt   *time.Time  `json:"finished_at"`
-	Version      int64       `json:"version"`
-	EndReason    pgtype.Text `json:"end_reason"`
-	EndedBy      *string     `json:"ended_by"`
+	ID            string      `json:"id"`
+	RoomID        string      `json:"room_id"`
+	GameID        string      `json:"game_id"`
+	RulesVersion  string      `json:"rules_version"`
+	Status        string      `json:"status"`
+	Revision      int64       `json:"revision"`
+	WinnerID      *string     `json:"winner_id"`
+	CreatedAt     time.Time   `json:"created_at"`
+	FinishedAt    *time.Time  `json:"finished_at"`
+	Version       int64       `json:"version"`
+	EndReason     pgtype.Text `json:"end_reason"`
+	EndedBy       *string     `json:"ended_by"`
+	AwaitingSince time.Time   `json:"awaiting_since"`
 }
 
 type MatchParticipant struct {

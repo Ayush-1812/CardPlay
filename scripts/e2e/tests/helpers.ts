@@ -1,5 +1,6 @@
 import { expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
+import { hiddenCardLeaks } from "./db";
 
 export const PASSWORD = "e2e-password-" + randomBytes(6).toString("hex");
 
@@ -150,14 +151,20 @@ export function latestState(p: Player): any {
   return null;
 }
 
-export function leaks(players: Player[]) {
-  const out: string[] = [];
-  for (const p of players)
-    for (const q of players)
-      if (p !== q)
-        for (const id of latestState(q)?.view.self.hand ?? [])
-          if (p.frames.some((f) => f.includes(`"${id}"`))) out.push(`${p.name} saw ${q.name}'s ${id}`);
-  return out;
+export function userIDOf(p: Player): string {
+  const st = latestState(p);
+  return st.view.public.players[st.view.self.seat].user_id;
+}
+
+// Fails if any player ever received a card hidden in another player's hand
+// (exact, checked against the stored snapshot of every revision).
+export async function expectNoLeaks(players: Player[]) {
+  const matchID = latestState(players[0]).match_id;
+  const leaks = await hiddenCardLeaks(
+    matchID,
+    players.map((p) => ({ name: p.name, userID: userIDOf(p), frames: p.frames })),
+  );
+  expect(leaks).toEqual([]);
 }
 
 export const statusText = (p: Player) => p.page.locator(".game-status strong").innerText();

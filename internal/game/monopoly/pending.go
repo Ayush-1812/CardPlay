@@ -450,24 +450,7 @@ func (s *State) payDebt(seat int, a Pay) ([]Event, error) {
 	}
 	payer := &s.Players[seat]
 	eligible := 0
-	var all []CardID
-	for _, id := range payer.Bank {
-		all = append(all, id)
-	}
-	for _, set := range payer.Sets {
-		for _, id := range set.Cards {
-			if mustCard(id).Kind != KindRainbowWild {
-				all = append(all, id)
-			}
-		}
-		if set.House != "" {
-			all = append(all, set.House)
-		}
-		if set.Hotel != "" {
-			all = append(all, set.Hotel)
-		}
-	}
-	all = append(all, payer.Detached...)
+	all := payer.payable()
 	for _, id := range all {
 		eligible += mustCard(id).Value
 	}

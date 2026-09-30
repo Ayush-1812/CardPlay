@@ -53,6 +53,8 @@ The product owner decided these on 29 September 2026. Each adopts the rule speci
 | Q3.4 | A set that becomes incomplete detaches its buildings; losing the House also detaches the Hotel. |
 | Q3.5 | On their own turn, a player may move attached or detached buildings free to another eligible complete set. |
 
+| Turn timeout default move (not in the printed rules): the most passive legal move for the awaited seat, never a play from hand or a targeted action; payment bank-first, lowest value first | Owner decision 2026-09-30 (PRD P09) | `timeout.go` `TimeoutAction`, `Module.TimeoutMoves` | `TestTimeoutActionIsAlwaysLegal`, `TestTimeoutActionChoices` |
+
 ## Not in the engine
 
 - Six or more players (B1 p1: needs two packs). The release supports 2–5 players with one deck.

@@ -76,6 +76,21 @@ type Rejection interface {
 	RejectionCode() string
 }
 
+// TimeoutMove is a game's default command for one awaited user. The platform
+// fills in the command ID and expected revision.
+type TimeoutMove struct {
+	UserID  string
+	Command Command
+}
+
+// TimeoutPolicy is implemented by games that can move for players who have
+// not acted within the platform's turn timeout. TimeoutMoves returns one
+// default move per user the game is currently waiting on. Each move still
+// goes through Apply like any other command.
+type TimeoutPolicy interface {
+	TimeoutMoves(State) ([]TimeoutMove, error)
+}
+
 // CardCatalog is implemented by games whose public card metadata clients need.
 type CardCatalog interface {
 	Cards() any

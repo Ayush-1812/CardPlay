@@ -12,12 +12,14 @@ package matches
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"strconv"
 	"time"
@@ -31,8 +33,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Product timings (PRD P09). There is deliberately no turn timer.
+// Product timings (PRD P09).
 const (
+	// DefaultTurnTimeout is how long the game waits for the awaited player's
+	// move before the server plays the game's default move for them
+	// (decision 2026-09-30; MATCH_TURN_TIMEOUT overrides it).
+	DefaultTurnTimeout = 2 * time.Minute
 	// PresenceTimeout marks a controller disconnected when its heartbeats stop
 	// (for example after a crash of the instance holding the socket).
 	PresenceTimeout = 45 * time.Second
@@ -45,6 +51,9 @@ type Module struct {
 	DB     *pgxpool.Pool
 	Games  *game.Registry
 	Random io.Reader // crypto/rand in production
+	// TurnTimeout, when positive, lets Sweep move for players who have not
+	// acted for this long while the match is playing.
+	TurnTimeout time.Duration
 }
 
 // Error is a match-level refusal with an HTTP status and, for stale
@@ -103,8 +112,11 @@ type State struct {
 	Participants   []Participant `json:"participants"`
 	CanVoteAbandon bool          `json:"can_vote_abandon"`
 	VoteOpensAt    *time.Time    `json:"vote_opens_at,omitempty"`
-	View           game.View     `json:"view"`
-	Events         []EventView   `json:"events"`
+	// TurnSecondsLeft counts down to the server's default move while the
+	// match is playing. Relative, so client clock skew does not matter.
+	TurnSecondsLeft *int        `json:"turn_seconds_left,omitempty"`
+	View            game.View   `json:"view"`
+	Events          []EventView `json:"events"`
 }
 
 // Ack confirms a durably applied command.
@@ -259,46 +271,45 @@ func (m *Module) Disconnect(ctx context.Context, matchID, userID string, gen int
 	})
 }
 
-// StateFor builds the viewer's projection from one consistent snapshot. A
+// StateFor builds the viewer's projection. One SQL statement reads the match,
+// the viewer's seat, the latest snapshot, every participant and the viewer's
+// recent events, so the result is consistent and costs one round trip. A
 // nonzero gen also checks the caller still controls the seat.
 func (m *Module) StateFor(ctx context.Context, matchID, userID string, gen int64) (State, error) {
-	tx, err := m.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return State{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	q := store.New(tx)
-	me, err := q.MatchParticipant(ctx, store.MatchParticipantParams{MatchID: matchID, UserID: userID})
+	mt, err := store.New(m.DB).MatchStateFor(ctx, store.MatchStateForParams{MatchID: matchID, ViewerID: userID})
 	if err != nil {
 		return State{}, notFound(err)
 	}
-	if gen != 0 && me.ControllerGeneration != gen {
+	if gen != 0 && mt.ControllerGeneration != gen {
 		return State{}, ErrReplaced
-	}
-	mt, err := q.Match(ctx, matchID)
-	if err != nil {
-		return State{}, notFound(err)
 	}
 	g, ok := m.Games.Get(mt.GameID, mt.RulesVersion)
 	if !ok {
 		return State{}, &Error{Code: "GAME_NOT_READY", Status: 501, Message: "This rules engine is not installed"}
 	}
-	snap, err := q.LatestSnapshot(ctx, matchID)
+	view, err := g.View(game.State{SchemaVersion: int(mt.SchemaVersion), Data: mt.State}, userID)
 	if err != nil {
 		return State{}, err
 	}
-	view, err := g.View(game.State{SchemaVersion: int(snap.SchemaVersion), Data: snap.State}, userID)
-	if err != nil {
-		return State{}, err
+	var parts []struct {
+		UserID         string     `json:"user_id"`
+		Seat           int32      `json:"seat"`
+		Handle         string     `json:"handle"`
+		DisplayName    string     `json:"display_name"`
+		DisconnectedAt *time.Time `json:"disconnected_at"`
+		AbandonVote    bool       `json:"abandon_vote"`
 	}
-	parts, err := q.MatchParticipants(ctx, matchID)
-	if err != nil {
+	if err := json.Unmarshal(mt.Participants, &parts); err != nil {
 		return State{}, err
 	}
 	st := State{
 		MatchID: mt.ID, RoomID: mt.RoomID, GameID: mt.GameID, RulesVersion: mt.RulesVersion, Status: mt.Status,
 		EndReason: mt.EndReason.String, WinnerID: mt.WinnerID, EndedBy: mt.EndedBy, Revision: mt.Revision, Version: mt.Version,
 		View: view, Events: []EventView{},
+	}
+	if mt.Status == "playing" && m.TurnTimeout > 0 {
+		left := max(0, int(m.TurnTimeout.Seconds()-mt.WaitedSeconds))
+		st.TurnSecondsLeft = &left
 	}
 	var earliestAbsence *time.Time
 	canVote := false
@@ -319,15 +330,11 @@ func (m *Module) StateFor(ctx context.Context, matchID, userID string, gen int64
 		st.VoteOpensAt = &opens
 		st.CanVoteAbandon = canVote && time.Now().After(opens)
 	}
-	events, err := q.RecentEvents(ctx, store.RecentEventsParams{MatchID: matchID, ViewerID: userID})
-	if err != nil {
+	// Oldest first; the query keeps the newest 60 visible to this viewer.
+	if err := json.Unmarshal(mt.Events, &st.Events); err != nil {
 		return State{}, err
 	}
-	for i := len(events) - 1; i >= 0; i-- {
-		e := events[i]
-		st.Events = append(st.Events, EventView{Revision: e.Revision, Kind: e.Kind, Payload: e.Payload, CreatedAt: e.CreatedAt})
-	}
-	return st, tx.Commit(ctx)
+	return st, nil
 }
 
 func requestHash(cmd game.Command) (string, json.RawMessage, error) {
@@ -424,41 +431,9 @@ func (m *Module) Execute(ctx context.Context, matchID, userID string, gen int64,
 		if err != nil {
 			return err
 		}
-		next := mt.Revision + 1
-		if err := q.InsertSnapshot(ctx, store.InsertSnapshotParams{MatchID: matchID, Revision: next, SchemaVersion: int32(tr.State.SchemaVersion), State: tr.State.Data}); err != nil {
-			return err
-		}
-		for i, e := range tr.Events {
-			var audience *string
-			if !e.Public {
-				a := e.AudienceUserID
-				audience = &a
-			}
-			payload := e.Payload
-			if len(payload) == 0 {
-				payload = []byte(`{}`)
-			}
-			if err := q.InsertGameEvent(ctx, store.InsertGameEventParams{MatchID: matchID, Revision: next, EventIndex: int32(i), Kind: e.Kind, AudienceUserID: audience, Public: e.Public, Payload: payload}); err != nil {
-				return err
-			}
-		}
-		result, _ := json.Marshal(map[string]int64{"revision": next})
-		if err := q.InsertCommand(ctx, store.InsertCommandParams{MatchID: matchID, ActorID: userID, CommandID: cmd.ID, RequestHash: hash, ResultingRevision: next, Result: result}); err != nil {
-			return err
-		}
-		if err := q.AdvanceMatch(ctx, store.AdvanceMatchParams{ID: matchID, Revision: next}); err != nil {
-			return err
-		}
-		if tr.Outcome.Finished {
-			winner := tr.Outcome.WinnerUserID
-			if err := end(ctx, q, mt, "finished", "won", &winner, nil); err != nil {
-				return err
-			}
-		} else if err := notify(ctx, q, mt.RoomID, "match.updated"); err != nil {
-			return err
-		}
+		next, err := commit(ctx, q, mt, mt.Revision, userID, cmd.ID, hash, tr, false)
 		ack = Ack{Revision: next}
-		return nil
+		return err
 	})
 	if err != nil {
 		return Ack{}, err
@@ -467,6 +442,147 @@ func (m *Module) Execute(ctx context.Context, matchID, userID string, gen int64,
 		return Ack{}, rejection
 	}
 	return ack, nil
+}
+
+// commit durably records one applied move at revision+1 inside the caller's
+// match-locked transaction: snapshot, events, command record, the match's
+// new revision (which restarts the turn clock), and the finish or a
+// notification. A timeout move is announced with a public "timed_out" event
+// before the game's own events.
+func commit(ctx context.Context, q *store.Queries, mt store.Match, revision int64, userID, commandID, hash string, tr game.Transition, timedOut bool) (int64, error) {
+	next := revision + 1
+	if err := q.InsertSnapshot(ctx, store.InsertSnapshotParams{MatchID: mt.ID, Revision: next, SchemaVersion: int32(tr.State.SchemaVersion), State: tr.State.Data}); err != nil {
+		return 0, err
+	}
+	events := tr.Events
+	if timedOut {
+		payload, _ := json.Marshal(map[string]string{"user_id": userID})
+		events = append([]game.Event{{Kind: "timed_out", Public: true, Payload: payload}}, events...)
+	}
+	for i, e := range events {
+		var audience *string
+		if !e.Public {
+			a := e.AudienceUserID
+			audience = &a
+		}
+		payload := e.Payload
+		if len(payload) == 0 {
+			payload = []byte(`{}`)
+		}
+		if err := q.InsertGameEvent(ctx, store.InsertGameEventParams{MatchID: mt.ID, Revision: next, EventIndex: int32(i), Kind: e.Kind, AudienceUserID: audience, Public: e.Public, Payload: payload}); err != nil {
+			return 0, err
+		}
+	}
+	record := map[string]any{"revision": next}
+	if timedOut {
+		record["timeout"] = true
+	}
+	result, _ := json.Marshal(record)
+	if err := q.InsertCommand(ctx, store.InsertCommandParams{MatchID: mt.ID, ActorID: userID, CommandID: commandID, RequestHash: hash, ResultingRevision: next, Result: result}); err != nil {
+		return 0, err
+	}
+	if err := q.AdvanceMatch(ctx, store.AdvanceMatchParams{ID: mt.ID, Revision: next}); err != nil {
+		return 0, err
+	}
+	if tr.Outcome.Finished {
+		winner := tr.Outcome.WinnerUserID
+		return next, end(ctx, q, mt, "finished", "won", &winner, nil)
+	}
+	return next, notify(ctx, q, mt.RoomID, "match.updated")
+}
+
+// Timeouts plays the game's default move for every player the game has been
+// waiting on for longer than TurnTimeout (decision 2026-09-30). It keeps
+// moving for those same players until the game waits on someone else, so an
+// idle player's whole decision completes: for example accept, then pay.
+func (m *Module) Timeouts(ctx context.Context) error {
+	if m.TurnTimeout <= 0 {
+		return nil
+	}
+	ids, err := store.New(m.DB).IdleMatches(ctx, m.TurnTimeout.Seconds())
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		// One faulty match must not hold up the others; it is retried on the
+		// next sweep and logged each time.
+		if err := m.tx(ctx, func(q *store.Queries) error { return m.timeoutMatch(ctx, q, id) }); err != nil && ctx.Err() == nil {
+			slog.Warn("turn timeout failed", "match_id", id, "error", err.Error())
+		}
+	}
+	return nil
+}
+
+func (m *Module) timeoutMatch(ctx context.Context, q *store.Queries, id string) error {
+	mt, err := q.LockMatch(ctx, id)
+	if err != nil {
+		return notFound(err)
+	}
+	// Recheck under the lock: another instance may have moved already, a
+	// player may have moved at the last moment, or the match paused.
+	if mt.Status != "playing" || time.Since(mt.AwaitingSince) < m.TurnTimeout {
+		return nil
+	}
+	g, ok := m.Games.Get(mt.GameID, mt.RulesVersion)
+	policy, hasPolicy := g.(game.TimeoutPolicy)
+	if !ok || !hasPolicy {
+		return nil
+	}
+	snap, err := q.LatestSnapshot(ctx, id)
+	if err != nil {
+		return err
+	}
+	state := game.State{SchemaVersion: int(snap.SchemaVersion), Data: snap.State}
+	revision := mt.Revision
+	var idle map[string]bool
+	// A decision is at most a handful of moves (accept, pay, place each
+	// received card); the bound only guards against a faulty policy.
+	for range 50 {
+		moves, err := policy.TimeoutMoves(state)
+		if err != nil {
+			return err
+		}
+		if idle == nil {
+			idle = map[string]bool{}
+			for _, mv := range moves {
+				idle[mv.UserID] = true
+			}
+		}
+		i := slices.IndexFunc(moves, func(mv game.TimeoutMove) bool { return idle[mv.UserID] })
+		if i < 0 {
+			return nil
+		}
+		mv := moves[i]
+		cmd := mv.Command
+		cmd.ID = uuid()
+		cmd.ExpectedRevision = revision
+		hash, payload, err := requestHash(cmd)
+		if err != nil {
+			return err
+		}
+		cmd.Payload = payload
+		tr, err := g.Apply(ctx, state, mv.UserID, cmd)
+		if err != nil {
+			return fmt.Errorf("default %s move was rejected: %w", cmd.Kind, err)
+		}
+		if revision, err = commit(ctx, q, mt, revision, mv.UserID, cmd.ID, hash, tr, true); err != nil {
+			return err
+		}
+		if tr.Outcome.Finished {
+			return nil
+		}
+		state = tr.State
+	}
+	return errors.New("default moves did not settle")
+}
+
+func uuid() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	h := hex.EncodeToString(b)
+	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
 }
 
 // Start deals a new match for a waiting room whose members are all ready.
@@ -633,7 +749,7 @@ func (m *Module) Sweep(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return m.Timeouts(ctx)
 }
 
 // Retention prunes intermediate snapshots of ended matches and deletes match

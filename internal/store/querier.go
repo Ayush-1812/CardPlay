@@ -59,6 +59,7 @@ type Querier interface {
 	FindCommand(ctx context.Context, arg FindCommandParams) (GameCommand, error)
 	HasBlock(ctx context.Context, arg HasBlockParams) (bool, error)
 	HostStillAbsent(ctx context.Context, arg HostStillAbsentParams) (bool, error)
+	IdleMatches(ctx context.Context, timeoutSeconds float64) ([]string, error)
 	InsertChat(ctx context.Context, arg InsertChatParams) (RoomChat, error)
 	InsertCommand(ctx context.Context, arg InsertCommandParams) error
 	InsertGameEvent(ctx context.Context, arg InsertGameEventParams) error
@@ -82,6 +83,9 @@ type Querier interface {
 	Match(ctx context.Context, id string) (Match, error)
 	MatchParticipant(ctx context.Context, arg MatchParticipantParams) (MatchParticipant, error)
 	MatchParticipants(ctx context.Context, matchID string) ([]MatchParticipantsRow, error)
+	// Everything one viewer's projection needs, read in one statement (one
+	// consistent snapshot, one round trip).
+	MatchStateFor(ctx context.Context, arg MatchStateForParams) (MatchStateForRow, error)
 	Members(ctx context.Context, roomID string) ([]MembersRow, error)
 	MuteUser(ctx context.Context, arg MuteUserParams) (int64, error)
 	MyInvitations(ctx context.Context, userID string) ([]MyInvitationsRow, error)
@@ -111,6 +115,7 @@ type Querier interface {
 	SearchPublicUser(ctx context.Context, arg SearchPublicUserParams) (SearchPublicUserRow, error)
 	SessionUser(ctx context.Context, tokenHash string) (SessionUserRow, error)
 	SetAbandonVote(ctx context.Context, arg SetAbandonVoteParams) error
+	// Resuming play restarts the turn clock.
 	SetMatchStatus(ctx context.Context, arg SetMatchStatusParams) error
 	SetReady(ctx context.Context, arg SetReadyParams) error
 	SetRoomHost(ctx context.Context, arg SetRoomHostParams) error

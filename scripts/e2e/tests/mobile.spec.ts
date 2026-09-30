@@ -75,7 +75,9 @@ test.describe.serial("mobile play", () => {
     await expect(desk.page.locator(".chat-drawer.open").getByText("from my phone")).toBeVisible();
     await noSideScroll(phone);
     // On a phone the drawer covers the table; closing it returns there.
-    await phone.page.getByRole("button", { name: "Close chat" }).tap();
+    const back = phone.page.getByRole("button", { name: "Close chat" });
+    await expect(back).toHaveText(/Back to table/);
+    await back.tap();
     await expect(phone.page.getByRole("button", { name: "Leave match" })).toBeVisible();
   });
 

@@ -19,12 +19,15 @@ type Config struct {
 	MetricsAddress string
 	// DBMaxConns bounds the PostgreSQL pool per API instance.
 	DBMaxConns int32
+	// TurnTimeout is how long a match waits for the awaited player before the
+	// server plays the default move for them; 0 disables it.
+	TurnTimeout time.Duration
 }
 
 func Load() (Config, error) { return Parse(os.Getenv) }
 
 func Parse(get func(string) string) (Config, error) {
-	c := Config{Environment: get("APP_ENV"), Address: get("HTTP_ADDR"), DatabaseURL: get("DATABASE_URL"), Origin: get("APP_ORIGIN"), SMTPAddress: get("SMTP_ADDR"), MailFrom: get("MAIL_FROM"), SMTPUsername: get("SMTP_USERNAME"), SMTPPassword: get("SMTP_PASSWORD"), SessionTTL: 7 * 24 * time.Hour, MetricsAddress: get("METRICS_ADDR"), DBMaxConns: 20}
+	c := Config{Environment: get("APP_ENV"), Address: get("HTTP_ADDR"), DatabaseURL: get("DATABASE_URL"), Origin: get("APP_ORIGIN"), SMTPAddress: get("SMTP_ADDR"), MailFrom: get("MAIL_FROM"), SMTPUsername: get("SMTP_USERNAME"), SMTPPassword: get("SMTP_PASSWORD"), SessionTTL: 7 * 24 * time.Hour, MetricsAddress: get("METRICS_ADDR"), DBMaxConns: 20, TurnTimeout: 2 * time.Minute}
 	if c.Environment == "" {
 		c.Environment = "development"
 	}
@@ -48,6 +51,13 @@ func Parse(get func(string) string) (Config, error) {
 			return c, errors.New("DB_MAX_CONNS must be 4-200")
 		}
 		c.DBMaxConns = int32(n)
+	}
+	if v := get("MATCH_TURN_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || (d != 0 && (d < 15*time.Second || d > time.Hour)) {
+			return c, errors.New("MATCH_TURN_TIMEOUT must be 0 (off) or between 15s and 1h, for example 2m")
+		}
+		c.TurnTimeout = d
 	}
 	u, err := url.Parse(c.DatabaseURL)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" {

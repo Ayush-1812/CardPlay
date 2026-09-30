@@ -26,11 +26,33 @@ UPDATE match_participants p SET disconnected_at=p.last_seen_at FROM matches m
 WHERE m.id=p.match_id AND m.status IN ('playing','paused') AND p.disconnected_at IS NULL AND p.last_seen_at < now()-interval '45 seconds'
 RETURNING p.match_id;
 -- name: SetMatchStatus :exec
-UPDATE matches SET status=$2,version=version+1 WHERE id=$1;
+-- Resuming play restarts the turn clock.
+UPDATE matches SET status=sqlc.arg(status),version=version+1,
+ awaiting_since=CASE WHEN sqlc.arg(status)::text='playing' THEN now() ELSE awaiting_since END
+WHERE id=sqlc.arg(id);
 -- name: BumpMatchVersion :exec
 UPDATE matches SET version=version+1 WHERE id=$1;
 -- name: AdvanceMatch :exec
-UPDATE matches SET revision=$2,version=version+1 WHERE id=$1;
+UPDATE matches SET revision=$2,version=version+1,awaiting_since=now() WHERE id=$1;
+-- name: IdleMatches :many
+SELECT id FROM matches WHERE status='playing' AND awaiting_since < now()-make_interval(secs => sqlc.arg(timeout_seconds)::float8)
+ORDER BY awaiting_since LIMIT 50;
+-- name: MatchStateFor :one
+-- Everything one viewer's projection needs, read in one statement (one
+-- consistent snapshot, one round trip).
+SELECT m.id,m.room_id,m.game_id,m.rules_version,m.status,m.end_reason,m.winner_id,m.ended_by,m.revision,m.version,
+ extract(epoch FROM now()-m.awaiting_since)::float8 AS waited_seconds,
+ me.controller_generation,s.schema_version,s.state,
+ (SELECT coalesce(jsonb_agg(jsonb_build_object('user_id',p.user_id,'seat',p.seat,'handle',u.handle,'display_name',u.display_name,'disconnected_at',p.disconnected_at,'abandon_vote',p.abandon_vote) ORDER BY p.seat),'[]'::jsonb)
+  FROM match_participants p JOIN users u ON u.id=p.user_id WHERE p.match_id=m.id)::jsonb AS participants,
+ (SELECT coalesce(jsonb_agg(jsonb_build_object('revision',e.revision,'kind',e.kind,'payload',e.payload,'created_at',e.created_at) ORDER BY e.revision,e.event_index),'[]'::jsonb)
+  FROM (SELECT ge.revision,ge.event_index,ge.kind,ge.payload,ge.created_at FROM game_events ge
+        WHERE ge.match_id=m.id AND (ge.public OR ge.audience_user_id=sqlc.arg(viewer_id)::uuid)
+        ORDER BY ge.revision DESC,ge.event_index DESC LIMIT 60) e)::jsonb AS events
+FROM matches m
+JOIN match_participants me ON me.match_id=m.id AND me.user_id=sqlc.arg(viewer_id)::uuid
+JOIN LATERAL (SELECT gs.schema_version,gs.state FROM game_snapshots gs WHERE gs.match_id=m.id ORDER BY gs.revision DESC LIMIT 1) s ON true
+WHERE m.id=sqlc.arg(match_id)::uuid;
 -- name: EndMatch :exec
 UPDATE matches SET status=sqlc.arg(status),winner_id=sqlc.narg(winner_id),end_reason=sqlc.arg(end_reason),ended_by=sqlc.narg(ended_by),finished_at=now(),version=version+1
 WHERE id=sqlc.arg(id);

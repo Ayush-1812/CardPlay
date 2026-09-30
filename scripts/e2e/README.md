@@ -5,10 +5,13 @@ The suite drives real browser sessions through the production web build. Each te
 | Spec | Covers |
 |---|---|
 | `social.spec.ts` | Registration with the emailed verification token. Server-side validation, and an unverified account being refused. Friend request and acceptance. Room creation, a friend invitation and an invite link. Live lobby chat (plain text only, direction overrides refused). Report and mute. |
-| `match.spec.ts` | Invite, ready and start. Chat during a match with the unread count. Refresh restoring the same hand. A dropped connection pausing and resuming the match. A second tab taking the seat and giving it back. An API kill and restart mid-match. A **complete two-player match played through the UI until someone wins**. Hidden-card leak checks on every WebSocket frame. |
+| `match.spec.ts` | Invite, ready and start. Chat during a match with the unread count. Refresh restoring the same hand. A dropped connection pausing and resuming the match. A second tab taking the seat and giving it back. An API kill and restart mid-match. A **complete two-player match played through the UI until someone wins**. Controls locked while reconnecting. Exact hidden-card checks (below). |
+| `actions.spec.ts` | Action cards through the real screens: It's My Birthday with payment, Debt Collector blocked by Just Say No, Sly Deal with placement, Rent paid in properties, Forced Deal with both players placing, Deal Breaker and Reorganize. It also checks the default destination for a multicolor wild, and that the **server's turn timeout** finishes an idle player's turn. The deal is staged in the database at revision 0 (before any move), so the needed cards are in hand; every move after that goes through the UI. |
 | `mobile.spec.ts` | A phone (Pixel 7 emulation, touch) against a desktop player. No sideways scroll in the lobby or at the table. Cards opened by tap. The chat drawer. Landscape. Leaving a match. |
 
 Every spec also fails on uncaught page errors.
+
+**Hidden-card check.** For every `match.state` a player received, the test loads the stored snapshot of that exact revision from the database. It fails if the frame contains a card that was then in another player's hand and had never been public. There are no false alarms from reshuffled cards.
 
 ## Run
 
@@ -20,7 +23,8 @@ The tests start their own Mailpit (ports 1026/8026), the API (127.0.0.1:18080) a
    ```sh
    API_INTERNAL_URL=http://127.0.0.1:18080 npm run build
    ```
-4. Install and run. Only the test runner is downloaded; the tests use the installed Microsoft Edge (`E2E_CHANNEL=chrome` uses Chrome instead):
+4. The tests read the database directly (staging and privacy checks), so `DATABASE_URL` must be the same throwaway database the API uses.
+5. Install and run. Only the test runner is downloaded; the tests use the installed Microsoft Edge (`E2E_CHANNEL=chrome` uses Chrome instead):
    ```sh
    cd scripts/e2e
    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
@@ -34,5 +38,4 @@ Failures keep a trace, screenshots and the last 40 socket events of the stuck pl
 
 Limits worth knowing:
 - The "dropped connection" test closes the socket from the page. Playwright's offline mode does not reliably block WebSockets, so this simulates an outage rather than cutting the network.
-- The full-match bots never play action cards, so the match ends through property sets. The action, payment and Just Say No rules are covered by the Go engine tests and the load test.
-- The hidden-card leak check compares each player's current hand with every frame the others received. A reshuffled discard pile could in principle make it report a false leak.
+- The full-match test ends through property sets; action cards are exercised in `actions.spec.ts`. Pass Go, House/Hotel and Double the Rent are covered only by the Go engine tests.

@@ -40,7 +40,7 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 	friends := &social.Module{DB: pool}
 	ch := &chat.Module{DB: pool}
 	games := game.NewRegistry(monopoly.Module{})
-	match := &matches.Module{DB: pool, Games: games, Random: rand.Reader}
+	match := &matches.Module{DB: pool, Games: games, Random: rand.Reader, TurnTimeout: c.TurnTimeout}
 	hub := realtime.New(pool, rm, ch, match, c.Origin)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, obs.Instrument(), obs.Recover)

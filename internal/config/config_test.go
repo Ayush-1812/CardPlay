@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestProductionRejectsUnsafeOriginAndDatabase(t *testing.T) {
 	values := map[string]string{"APP_ENV": "production", "APP_ORIGIN": "http://localhost:3000", "DATABASE_URL": "postgres://user:password@localhost/db?sslmode=disable", "SMTP_ADDR": "localhost:25", "MAIL_FROM": "hello@example.com", "SMTP_USERNAME": "user", "SMTP_PASSWORD": "secret"}
@@ -35,6 +38,20 @@ func TestMetricsAddressAndPoolSize(t *testing.T) {
 		delete(values, "METRICS_ADDR")
 		delete(values, "DB_MAX_CONNS")
 	}
+	if c.TurnTimeout != 2*time.Minute {
+		t.Fatalf("default turn timeout %s", c.TurnTimeout)
+	}
+	for _, bad := range []string{"10s", "2h", "soon"} {
+		values["MATCH_TURN_TIMEOUT"] = bad
+		if _, err := Parse(get); err == nil {
+			t.Errorf("accepted MATCH_TURN_TIMEOUT=%s", bad)
+		}
+	}
+	values["MATCH_TURN_TIMEOUT"] = "0"
+	if c, err = Parse(get); err != nil || c.TurnTimeout != 0 {
+		t.Fatalf("timeout off: %v %v", c.TurnTimeout, err)
+	}
+	delete(values, "MATCH_TURN_TIMEOUT")
 	values["METRICS_ADDR"], values["DB_MAX_CONNS"] = "127.0.0.1:9090", "40"
 	if c, err = Parse(get); err != nil || c.MetricsAddress != "127.0.0.1:9090" || c.DBMaxConns != 40 {
 		t.Fatalf("explicit: %+v %v", c, err)

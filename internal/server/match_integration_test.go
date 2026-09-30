@@ -624,6 +624,87 @@ func TestLiveMatch(t *testing.T) {
 		}
 	})
 
+	t.Run("an idle player's turn times out", func(t *testing.T) {
+		m := start()
+		ws := map[string]*wsClient{}
+		for _, u := range []string{alice, bob} {
+			ws[u] = e.dial(a, tokens[u])
+			_ = ws[u].send(map[string]any{"type": "match.subscribe", "match_id": m})
+		}
+		st, _ := ws[alice].state("playing", func(s map[string]any) bool { return s["status"] == "playing" })
+		if left, ok := st["turn_seconds_left"].(float64); !ok || left < 100 || left > 120 {
+			t.Fatalf("turn clock %v", st["turn_seconds_left"])
+		}
+		idle := activeUser(st)
+		watcher := alice
+		if idle == alice {
+			watcher = bob
+		}
+		sweep := func() {
+			t.Helper()
+			if err := a.app.Hub.Matches.Sweep(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Not yet due: nothing happens.
+		sweep()
+		if mt, _ := e.q.Match(ctx, m); mt.Revision != 0 {
+			t.Fatalf("moved before the timeout: revision %d", mt.Revision)
+		}
+		// A paused match never times out, even when the clock has run out.
+		_ = ws[watcher].conn.Close(websocket.StatusNormalClosure, "")
+		ws[idle].state("paused", func(s map[string]any) bool { return s["status"] == "paused" })
+		if _, err := pool.Exec(ctx, "UPDATE matches SET awaiting_since=now()-interval '10 minutes' WHERE id=$1", m); err != nil {
+			t.Fatal(err)
+		}
+		sweep()
+		if mt, _ := e.q.Match(ctx, m); mt.Revision != 0 {
+			t.Fatal("a paused match timed out")
+		}
+		// Resuming restarts the clock.
+		ws[watcher] = e.dial(a, tokens[watcher])
+		_ = ws[watcher].send(map[string]any{"type": "match.subscribe", "match_id": m})
+		ws[watcher].state("resumed", func(s map[string]any) bool { return s["status"] == "playing" })
+		sweep()
+		if mt, _ := e.q.Match(ctx, m); mt.Revision != 0 {
+			t.Fatal("resuming did not restart the turn clock")
+		}
+		// Out of time: the server ends the idle player's turn for them.
+		if _, err := pool.Exec(ctx, "UPDATE matches SET awaiting_since=now()-interval '3 minutes' WHERE id=$1", m); err != nil {
+			t.Fatal(err)
+		}
+		sweep()
+		after, _ := ws[watcher].state("timed out", func(s map[string]any) bool { return s["revision"].(float64) >= 1 })
+		if activeUser(after) != watcher || after["revision"].(float64) != 1 {
+			t.Fatalf("turn did not pass: active %s revision %v", activeUser(after), after["revision"])
+		}
+		var timedOut bool
+		for _, ev := range after["events"].([]any) {
+			ev := ev.(map[string]any)
+			if ev["kind"] == "timed_out" && ev["payload"].(map[string]any)["user_id"] == idle {
+				timedOut = true
+			}
+		}
+		if !timedOut {
+			t.Fatal("no timed_out event in the history")
+		}
+		if left := after["turn_seconds_left"].(float64); left < 100 {
+			t.Fatalf("the clock did not restart for the next player: %v", left)
+		}
+		var recorded bool
+		if err := pool.QueryRow(ctx, "SELECT (result->>'timeout')::boolean FROM game_commands WHERE match_id=$1 AND actor_id=$2", m, idle).Scan(&recorded); err != nil || !recorded {
+			t.Fatalf("timeout move not recorded as a command: %v %v", recorded, err)
+		}
+		// A second sweep does nothing: the new player has a fresh clock.
+		sweep()
+		if mt, _ := e.q.Match(ctx, m); mt.Revision != 1 {
+			t.Fatalf("double timeout: revision %d", mt.Revision)
+		}
+		if s, _ := e.do(a, "POST", "/api/v1/matches/"+m+"/leave", tokens[idle], nil); s != 204 {
+			t.Fatalf("leave=%d", s)
+		}
+	})
+
 	t.Run("all-offline matches expire", func(t *testing.T) {
 		m4 := start()
 		if _, err := pool.Exec(ctx, "UPDATE match_participants SET disconnected_at=now()-interval '25 hours' WHERE match_id=$1", m4); err != nil {

@@ -53,7 +53,7 @@ func (q *Queries) AddParticipant(ctx context.Context, arg AddParticipantParams) 
 }
 
 const advanceMatch = `-- name: AdvanceMatch :exec
-UPDATE matches SET revision=$2,version=version+1 WHERE id=$1
+UPDATE matches SET revision=$2,version=version+1,awaiting_since=now() WHERE id=$1
 `
 
 type AdvanceMatchParams struct {
@@ -142,7 +142,7 @@ func (q *Queries) ControllerReturned(ctx context.Context, arg ControllerReturned
 }
 
 const createMatch = `-- name: CreateMatch :one
-INSERT INTO matches(room_id,game_id,rules_version,status) VALUES($1,$2,$3,'paused') RETURNING id, room_id, game_id, rules_version, status, revision, winner_id, created_at, finished_at, version, end_reason, ended_by
+INSERT INTO matches(room_id,game_id,rules_version,status) VALUES($1,$2,$3,'paused') RETURNING id, room_id, game_id, rules_version, status, revision, winner_id, created_at, finished_at, version, end_reason, ended_by, awaiting_since
 `
 
 type CreateMatchParams struct {
@@ -167,6 +167,7 @@ func (q *Queries) CreateMatch(ctx context.Context, arg CreateMatchParams) (Match
 		&i.Version,
 		&i.EndReason,
 		&i.EndedBy,
+		&i.AwaitingSince,
 	)
 	return i, err
 }
@@ -244,6 +245,31 @@ func (q *Queries) FindCommand(ctx context.Context, arg FindCommandParams) (GameC
 	return i, err
 }
 
+const idleMatches = `-- name: IdleMatches :many
+SELECT id FROM matches WHERE status='playing' AND awaiting_since < now()-make_interval(secs => $1::float8)
+ORDER BY awaiting_since LIMIT 50
+`
+
+func (q *Queries) IdleMatches(ctx context.Context, timeoutSeconds float64) ([]string, error) {
+	rows, err := q.db.Query(ctx, idleMatches, timeoutSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertCommand = `-- name: InsertCommand :exec
 INSERT INTO game_commands(match_id,actor_id,command_id,request_hash,resulting_revision,result) VALUES($1,$2,$3,$4,$5,$6)
 `
@@ -318,7 +344,7 @@ func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) 
 }
 
 const latestRoomMatch = `-- name: LatestRoomMatch :one
-SELECT id, room_id, game_id, rules_version, status, revision, winner_id, created_at, finished_at, version, end_reason, ended_by FROM matches WHERE room_id=$1 ORDER BY created_at DESC LIMIT 1
+SELECT id, room_id, game_id, rules_version, status, revision, winner_id, created_at, finished_at, version, end_reason, ended_by, awaiting_since FROM matches WHERE room_id=$1 ORDER BY created_at DESC LIMIT 1
 `
 
 func (q *Queries) LatestRoomMatch(ctx context.Context, roomID string) (Match, error) {
@@ -337,12 +363,13 @@ func (q *Queries) LatestRoomMatch(ctx context.Context, roomID string) (Match, er
 		&i.Version,
 		&i.EndReason,
 		&i.EndedBy,
+		&i.AwaitingSince,
 	)
 	return i, err
 }
 
 const lockMatch = `-- name: LockMatch :one
-SELECT id, room_id, game_id, rules_version, status, revision, winner_id, created_at, finished_at, version, end_reason, ended_by FROM matches WHERE id=$1 FOR UPDATE
+SELECT id, room_id, game_id, rules_version, status, revision, winner_id, created_at, finished_at, version, end_reason, ended_by, awaiting_since FROM matches WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockMatch(ctx context.Context, id string) (Match, error) {
@@ -361,6 +388,7 @@ func (q *Queries) LockMatch(ctx context.Context, id string) (Match, error) {
 		&i.Version,
 		&i.EndReason,
 		&i.EndedBy,
+		&i.AwaitingSince,
 	)
 	return i, err
 }
@@ -432,6 +460,72 @@ func (q *Queries) MatchParticipants(ctx context.Context, matchID string) ([]Matc
 		return nil, err
 	}
 	return items, nil
+}
+
+const matchStateFor = `-- name: MatchStateFor :one
+SELECT m.id,m.room_id,m.game_id,m.rules_version,m.status,m.end_reason,m.winner_id,m.ended_by,m.revision,m.version,
+ extract(epoch FROM now()-m.awaiting_since)::float8 AS waited_seconds,
+ me.controller_generation,s.schema_version,s.state,
+ (SELECT coalesce(jsonb_agg(jsonb_build_object('user_id',p.user_id,'seat',p.seat,'handle',u.handle,'display_name',u.display_name,'disconnected_at',p.disconnected_at,'abandon_vote',p.abandon_vote) ORDER BY p.seat),'[]'::jsonb)
+  FROM match_participants p JOIN users u ON u.id=p.user_id WHERE p.match_id=m.id)::jsonb AS participants,
+ (SELECT coalesce(jsonb_agg(jsonb_build_object('revision',e.revision,'kind',e.kind,'payload',e.payload,'created_at',e.created_at) ORDER BY e.revision,e.event_index),'[]'::jsonb)
+  FROM (SELECT ge.revision,ge.event_index,ge.kind,ge.payload,ge.created_at FROM game_events ge
+        WHERE ge.match_id=m.id AND (ge.public OR ge.audience_user_id=$1::uuid)
+        ORDER BY ge.revision DESC,ge.event_index DESC LIMIT 60) e)::jsonb AS events
+FROM matches m
+JOIN match_participants me ON me.match_id=m.id AND me.user_id=$1::uuid
+JOIN LATERAL (SELECT gs.schema_version,gs.state FROM game_snapshots gs WHERE gs.match_id=m.id ORDER BY gs.revision DESC LIMIT 1) s ON true
+WHERE m.id=$2::uuid
+`
+
+type MatchStateForParams struct {
+	ViewerID string `json:"viewer_id"`
+	MatchID  string `json:"match_id"`
+}
+
+type MatchStateForRow struct {
+	ID                   string      `json:"id"`
+	RoomID               string      `json:"room_id"`
+	GameID               string      `json:"game_id"`
+	RulesVersion         string      `json:"rules_version"`
+	Status               string      `json:"status"`
+	EndReason            pgtype.Text `json:"end_reason"`
+	WinnerID             *string     `json:"winner_id"`
+	EndedBy              *string     `json:"ended_by"`
+	Revision             int64       `json:"revision"`
+	Version              int64       `json:"version"`
+	WaitedSeconds        float64     `json:"waited_seconds"`
+	ControllerGeneration int64       `json:"controller_generation"`
+	SchemaVersion        int32       `json:"schema_version"`
+	State                []byte      `json:"state"`
+	Participants         []byte      `json:"participants"`
+	Events               []byte      `json:"events"`
+}
+
+// Everything one viewer's projection needs, read in one statement (one
+// consistent snapshot, one round trip).
+func (q *Queries) MatchStateFor(ctx context.Context, arg MatchStateForParams) (MatchStateForRow, error) {
+	row := q.db.QueryRow(ctx, matchStateFor, arg.ViewerID, arg.MatchID)
+	var i MatchStateForRow
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.GameID,
+		&i.RulesVersion,
+		&i.Status,
+		&i.EndReason,
+		&i.WinnerID,
+		&i.EndedBy,
+		&i.Revision,
+		&i.Version,
+		&i.WaitedSeconds,
+		&i.ControllerGeneration,
+		&i.SchemaVersion,
+		&i.State,
+		&i.Participants,
+		&i.Events,
+	)
+	return i, err
 }
 
 const pruneEndedSnapshots = `-- name: PruneEndedSnapshots :exec
@@ -514,16 +608,19 @@ func (q *Queries) SetAbandonVote(ctx context.Context, arg SetAbandonVoteParams) 
 }
 
 const setMatchStatus = `-- name: SetMatchStatus :exec
-UPDATE matches SET status=$2,version=version+1 WHERE id=$1
+UPDATE matches SET status=$1,version=version+1,
+ awaiting_since=CASE WHEN $1::text='playing' THEN now() ELSE awaiting_since END
+WHERE id=$2
 `
 
 type SetMatchStatusParams struct {
-	ID     string `json:"id"`
 	Status string `json:"status"`
+	ID     string `json:"id"`
 }
 
+// Resuming play restarts the turn clock.
 func (q *Queries) SetMatchStatus(ctx context.Context, arg SetMatchStatusParams) error {
-	_, err := q.db.Exec(ctx, setMatchStatus, arg.ID, arg.Status)
+	_, err := q.db.Exec(ctx, setMatchStatus, arg.Status, arg.ID)
 	return err
 }
 

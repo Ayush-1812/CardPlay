@@ -41,11 +41,27 @@ After each commit every connected participant's socket reloads the latest snapsh
 
 ## Pauses, abandonment and endings (P09, P10)
 
-There is **no turn timer**: P09 rules out a normal turn timeout. Time only matters for absence.
+**Turn timeout** (owner decision 2026-09-30, P09). The match records when it started waiting for the current move (`awaiting_since`). Every applied command restarts that clock, and so does resuming from a pause. A paused match never times out.
+
+When a *connected* player the game is waiting on makes no move for `MATCH_TURN_TIMEOUT` (default 2 minutes; `0` turns it off), the sweep (every 5 seconds) asks the rules engine for the most passive legal move. It applies that move through the same durable path as a player's command:
+
+- **Play phase:** end the turn, returning the lowest-value cards over seven.
+- **An action against you, or a Just Say No exchange:** accept, so the effect or the last Just Say No stands.
+- **Payment:** bank first, then detached buildings, then property cards and attached buildings, lowest value first, stopping once the debt is covered. If the table is worth less than the debt, everything goes.
+- **Received properties:** into an incomplete set of a legal color, otherwise a new set; a multicolor wild stays unassigned.
+
+The server keeps moving for the same player until the game waits on someone else, so a whole decision completes (for example accept, then pay). It never plays a card from hand onto the table and never targets anyone.
+
+- Each such move is announced with a public `timed_out` event before the game's own events, and recorded in `game_commands` with `"timeout": true`.
+- Clients get `turn_seconds_left` in every `match.state` and count down locally.
+- The match lock, plus a recheck of the clock under it, means two API instances never both move.
+
+Covered by `TestTimeoutActionIsAlwaysLegal` (200 random games), `TestTimeoutActionChoices`, the "an idle player's turn times out" live-match subtest, and the Playwright action spec.
 
 | Situation | Behavior |
 |---|---|
-| Any seat absent | Match `paused`; every command is refused. It resumes automatically when all seats are present again |
+| Awaited player connected but idle for 2 minutes | The server makes the default move for them (see above); play continues |
+| Any seat absent | Match `paused`; every command is refused and the turn clock stops. It resumes automatically when all seats are present again, with a fresh clock |
 | New match | Starts `paused` and begins once every player has opened it |
 | Seat absent 5+ minutes | Players still present may vote to abandon. A unanimous vote ends the match with no winner (`voted`). Votes clear if the absent player returns |
 | Everyone absent 24 hours | The sweep abandons the match with no winner (`expired`) |
