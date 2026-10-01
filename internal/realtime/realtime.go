@@ -78,6 +78,8 @@ type Hub struct {
 	// listening reports whether the outbox LISTEN connection is active;
 	// without it this instance cannot deliver live updates.
 	listening atomic.Bool
+	// Hourly runs extra hourly housekeeping (for example idle-guest cleanup).
+	Hourly []func(context.Context) error
 }
 
 // Listening reports whether live change notifications are being received.
@@ -461,6 +463,8 @@ func (h *Hub) Run(ctx context.Context) {
 	defer cleanup.Stop()
 	presence := time.NewTicker(5 * time.Second)
 	defer presence.Stop()
+	idleRooms := time.NewTicker(time.Minute)
+	defer idleRooms.Stop()
 	q := store.New(h.DB)
 	for {
 		select {
@@ -477,6 +481,15 @@ func (h *Hub) Run(ctx context.Context) {
 			_ = q.DeleteExpiredSessions(ctx)
 			_ = q.DeleteExpiredLoginDevices(ctx)
 			_ = h.Matches.Retention(ctx)
+			for _, job := range h.Hourly {
+				if err := job(ctx); err != nil && ctx.Err() == nil {
+					slog.Warn("hourly housekeeping failed", "error_type", fmt.Sprintf("%T", err))
+				}
+			}
+		case <-idleRooms.C:
+			if _, err := h.Rooms.DeleteIdle(ctx); err != nil && ctx.Err() == nil {
+				slog.Warn("idle room cleanup failed", "error_type", fmt.Sprintf("%T", err))
+			}
 		case <-presence.C:
 			_ = h.Rooms.TransferAbsentHosts(ctx)
 			if err := h.Matches.Sweep(ctx); err != nil && ctx.Err() == nil {

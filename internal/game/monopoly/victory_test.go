@@ -71,12 +71,9 @@ func TestOffTurnVictory(t *testing.T) {
 			seat{Sets: []PropertySet{set("g", Green, greenCards...), set("o", Orange, orangeCards...), set("r", Red, redCards[1], redCards[2]), set("y", Brown, brownCards[1])}},
 		)
 		s = ok(t, s, 0, PlayForcedDeal{Card: act(ForcedDeal, 1), Target: 1, Take: brownCards[1], Offer: redCards[0]})
+		// Both received cards are single-color, so they are placed at once and
+		// the win is checked after the last placement.
 		s = ok(t, s, 1, accept(s))
-		s = ok(t, s, 1, PlaceReceived{Card: redCards[0], Set: "r"})
-		if s.Winner != nil {
-			t.Fatal("no win before every placement is done")
-		}
-		s = ok(t, s, 0, PlaceReceived{Card: brownCards[1], Set: "b"})
 		if s.Winner == nil || *s.Winner != 0 || s.Players[1].CompleteColors() != 3 {
 			t.Fatal("active player must win; the defender's collection waits")
 		}
@@ -98,10 +95,6 @@ func TestNoPrematureWin(t *testing.T) {
 	}
 	s = ok(t, s, 2, accept(s))
 	s = ok(t, s, 2, pay(s, money(2, 1)))
-	if s.Winner != nil || s.Phase != PhasePlacement {
-		t.Fatal("placement comes before the win")
-	}
-	s = ok(t, s, 0, PlaceReceived{Card: brownCards[1], Set: "b"})
 	if s.Winner == nil || *s.Winner != 0 {
 		t.Fatal("win after the action fully resolves")
 	}

@@ -51,6 +51,9 @@ func TestPaymentSelection(t *testing.T) {
 			}
 			n := ok(t, s, 1, pay(s, tc.cards...))
 			got := totalValue(n.Players[0].Bank) + totalValue(n.Players[0].Incoming)
+			for _, set := range n.Players[0].Sets {
+				got += totalValue(set.Cards)
+			}
 			if got != tc.value {
 				t.Fatalf("creditor received %dM, want %dM", got, tc.value)
 			}
@@ -86,8 +89,9 @@ func TestPaymentBreaksSets(t *testing.T) {
 		if len(payer.Sets) != 1 || payer.Sets[0].House != "" || !has(payer.Detached, act(House, 1)) || !has(payer.Detached, act(Hotel, 1)) {
 			t.Fatalf("buildings should detach from the broken set: %+v", payer)
 		}
-		if !has(n.Players[0].Incoming, greenCards[0]) || n.Phase != PhasePlacement {
-			t.Fatal("paid property goes to the recipient's property area")
+		// Single-color properties are placed for the recipient at once.
+		if len(n.Players[0].Sets) != 1 || len(n.Players[0].Sets[0].Cards) != 2 || n.Phase != PhasePlay {
+			t.Fatalf("paid properties go to the recipient's property area: %+v", n.Players[0])
 		}
 	})
 	t.Run("paying the House detaches the Hotel", func(t *testing.T) {
@@ -113,4 +117,26 @@ func TestPaymentBreaksSets(t *testing.T) {
 			t.Fatal("no placement needed for a building and money")
 		}
 	})
+}
+
+// Paying while a charge awaits your response accepts it in the same move;
+// nothing else may be "paid" that way.
+func TestPayAcceptsAnOpenCharge(t *testing.T) {
+	s := fixture(t,
+		seat{Hand: []CardID{act(DebtCollector, 1), act(SlyDeal, 1)}},
+		seat{Bank: []CardID{money(5, 1)}, Sets: []PropertySet{set("r", Red, redCards[0])}},
+	)
+	charged := ok(t, s, 0, PlayDebtCollector{Card: act(DebtCollector, 1), Target: 1})
+	rejected(t, charged, 0, pay(charged, money(5, 1)), CodeWrongPhase) // only the payer
+	paid := ok(t, charged, 1, pay(charged, money(5, 1)))
+	if !has(paid.Players[0].Bank, money(5, 1)) || paid.Phase != PhasePlay || paid.Pending != nil {
+		t.Fatal("paying should accept and settle the debt in one move")
+	}
+	// A Sly Deal is not a charge: "paying" it changes nothing.
+	stolen := ok(t, s, 0, PlaySlyDeal{Card: act(SlyDeal, 1), Target: 1, Take: redCards[0]})
+	before := snapshot(t, stolen)
+	rejected(t, stolen, 1, pay(stolen), CodeWrongPhase)
+	if snapshot(t, stolen) != before {
+		t.Fatal("a rejected payment must not accept the steal")
+	}
 }

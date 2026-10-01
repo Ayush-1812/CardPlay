@@ -50,6 +50,7 @@ export function Hand({
       key={id}
       type="button"
       className={`hand-card ${selected === id ? "selected" : ""}`}
+      data-card={id}
       aria-pressed={selected === id}
       aria-label={`${cardName(cards, id)}, ${cards[id]?.value ?? 0}M`}
       disabled={disabled}

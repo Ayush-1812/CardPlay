@@ -83,27 +83,43 @@ export async function newPlayer(browser: Browser, prefix: string, options: Param
 export async function registerViaUI(p: Player) {
   const { page } = p;
   await page.goto("/");
-  await page.getByRole("button", { name: "Create account", exact: true }).click();
-  await page.locator('input[name="display_name"]').fill(p.name);
-  await page.locator('input[name="handle"]').fill(p.handle);
-  await page.locator('input[name="email"]').fill(p.email);
-  await page.locator('input[name="password"]').fill(PASSWORD);
+  await page.getByRole("button", { name: "Create an account (adds friends)" }).click();
+  // The guest name field also uses display_name; fill the account form.
+  const form = page.locator(".auth-box");
+  await form.locator('input[name="display_name"]').fill(p.name);
+  await form.locator('input[name="handle"]').fill(p.handle);
+  await form.locator('input[name="email"]').fill(p.email);
+  await form.locator('input[name="password"]').fill(PASSWORD);
   await page.getByRole("button", { name: "Create account →" }).click();
   await expect(page.getByText("Check your email for a verification token.")).toBeVisible();
   const token = await mailToken(p.email, /Verify your CardPlay account/);
   await page.locator('input[name="token"]').fill(token);
   await page.getByRole("button", { name: "Verify email →" }).click();
   await expect(page.getByText("Email verified. You can sign in now.")).toBeVisible();
-  await login(p);
+  await signInForm(p);
+}
+
+async function signInForm(p: Player) {
+  const form = p.page.locator(".auth-box");
+  const { page } = p;
+  await form.locator('input[name="email"]').fill(p.email);
+  await form.locator('input[name="password"]').fill(PASSWORD);
+  await page.getByRole("button", { name: "Take your seat →" }).click();
+  await expect(page.getByRole("heading", { name: "Choose a game" })).toBeVisible();
 }
 
 export async function login(p: Player) {
-  const { page } = p;
-  await page.goto("/");
-  await page.locator('input[name="email"]').fill(p.email);
-  await page.locator('input[name="password"]').fill(PASSWORD);
-  await page.getByRole("button", { name: "Take your seat →" }).click();
-  await expect(page.getByText(/GOOD TO HAVE YOU HERE/)).toBeVisible();
+  await p.page.goto("/");
+  await p.page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await signInForm(p);
+}
+
+// Plays as a guest: just a name. Returns once the games screen shows.
+export async function playAsGuest(p: Player) {
+  await p.page.goto("/");
+  await p.page.getByLabel("Your name").fill(p.name);
+  await p.page.getByRole("button", { name: "Play as guest" }).click();
+  await expect(p.page.getByRole("heading", { name: "Choose a game" })).toBeVisible();
 }
 
 // Registration through the API the browser uses, for supporting players.
@@ -122,24 +138,54 @@ export async function registerViaAPI(p: Player) {
   await login(p);
 }
 
+// Friend request and acceptance through the Friends sheet.
 export async function makeFriends(a: Player, b: Player) {
-  await a.page.locator("#friend-handle").fill(b.handle);
-  await a.page.getByRole("button", { name: "Find", exact: true }).click();
-  await a.page.getByRole("button", { name: "Request", exact: true }).click();
-  await expect(a.page.getByText("Friend request sent.")).toBeVisible();
+  await a.page.getByRole("button", { name: "Friends", exact: true }).click();
+  const sheet = a.page.getByRole("dialog", { name: "Friends" });
+  await sheet.locator("#friend-handle").fill(b.handle);
+  await sheet.getByRole("button", { name: "Find", exact: true }).click();
+  await sheet.getByRole("button", { name: "Request", exact: true }).click();
+  await expect(a.page.getByText("Friend request sent.")).toBeAttached();
+  await a.page.keyboard.press("Escape");
   await b.page.reload();
-  const row = b.page.locator(".friend-row", { hasText: `@${a.handle}` });
+  await b.page.getByRole("button", { name: "Friends", exact: true }).click();
+  const row = b.page.getByRole("dialog", { name: "Friends" }).locator(".friend-row", { hasText: `@${a.handle}` });
   await expect(row.getByText("Wants to be friends")).toBeVisible();
   await row.getByRole("button", { name: "Accept" }).click();
   await expect(row.getByText("Friend", { exact: true })).toBeVisible();
+  await b.page.keyboard.press("Escape");
 }
 
+// Creates a Monopoly Deal room from the games screen, then names and sizes
+// it in Room settings.
 export async function createRoom(host: Player, name: string, seats: number) {
-  await host.page.locator('#new-room input[name="name"]').fill(name);
-  await host.page.locator('#new-room select[name="capacity"]').selectOption(String(seats));
-  await host.page.getByRole("button", { name: "Create private room →" }).click();
-  await expect(host.page.getByRole("heading", { level: 1, name })).toBeVisible();
-  await expect(host.page.getByText("Connected")).toBeVisible();
+  const { page } = host;
+  await page.getByRole("button", { name: "Monopoly Deal" }).click();
+  await page.getByRole("button", { name: "Create room" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /'s table$/ })).toBeVisible();
+  await page.getByText("Room settings").click();
+  await page.locator('.room-settings input[name="name"]').fill(name);
+  await page.locator('.room-settings select[name="capacity"]').selectOption(String(seats));
+  await page.locator(".room-settings").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+  await expect(page.locator(".room-head .pill")).toHaveText("Connected");
+}
+
+// Joins a room from a friend's invitation on the games screen.
+export async function joinInvitation(p: Player, roomName: string) {
+  await p.page.reload();
+  await p.page.locator(".rejoin-row", { hasText: roomName }).getByRole("button", { name: "Join →" }).click();
+  await expect(p.page.getByRole("heading", { level: 1, name: roomName })).toBeVisible();
+}
+
+// Taps a hand card the way a keyboard user would (cards overlap in the
+// fan). Cards are found by id, so a hand that is still re-rendering cannot
+// send the tap to the wrong card.
+export async function tapHandCard(p: Player, id: string) {
+  const card = p.page.locator(`.hand-card[data-card="${id}"]`);
+  await expect(card).toBeEnabled();
+  await card.focus();
+  await card.press("Enter");
 }
 
 // The newest match.state this player received.

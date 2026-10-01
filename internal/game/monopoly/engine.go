@@ -18,6 +18,8 @@ func Apply(s *State, seat int, a Action) (*State, []Event, error) {
 	if err != nil {
 		return s, nil, err
 	}
+	events = append(events, next.autoPlaceReceived()...)
+	events = append(events, next.autoEndTurn()...)
 	if err := next.CheckInvariants(); err != nil {
 		return s, nil, &InvariantError{Detail: err.Error()}
 	}
@@ -67,6 +69,79 @@ func (s *State) apply(seat int, a Action) ([]Event, error) {
 		return s.endTurn(seat, a)
 	}
 	return nil, reject(CodeInvalidAction, "unsupported action %T", a)
+}
+
+// autoPlaceReceived places received single-color property cards without
+// asking (owner decision 2026-10-01): such a card has one sensible home, the
+// fullest incomplete set of its color, or a new set when there is none.
+// A multicolor wild with no set to join stays unassigned. Other wilds wait
+// for their owner's choice.
+func (s *State) autoPlaceReceived() []Event {
+	var events []Event
+	for seat := range s.Players {
+		for _, id := range slices.Clone(s.Players[seat].Incoming) {
+			if s.Phase != PhasePlacement {
+				return events
+			}
+			c := mustCard(id)
+			var a PlaceReceived
+			switch {
+			case c.Kind == KindProperty:
+				a = PlaceReceived{Card: id, Set: s.Players[seat].openSet(c.Colors[0])}
+			case c.Kind == KindRainbowWild && !s.Players[seat].hasOpenSet():
+				a = PlaceReceived{Card: id} // nothing to join: unassigned
+			default:
+				continue
+			}
+			placed, err := s.placeReceived(seat, a)
+			if err != nil {
+				return events
+			}
+			events = append(events, placed...)
+		}
+	}
+	return events
+}
+
+// openSet is the ID of the fullest incomplete set of color, or "" for none.
+func (p *Player) openSet(color Color) string {
+	best, size := "", -1
+	for _, set := range p.Sets {
+		if set.Color == color && len(set.Cards) < colorInfo[color].Size && len(set.Cards) > size {
+			best, size = set.ID, len(set.Cards)
+		}
+	}
+	return best
+}
+
+// hasOpenSet reports whether any set has room for another card.
+func (p *Player) hasOpenSet() bool {
+	for _, set := range p.Sets {
+		if len(set.Cards) < colorInfo[set.Color].Size {
+			return true
+		}
+	}
+	return false
+}
+
+// autoEndTurn ends the active turn once all three plays are spent and
+// nothing is pending or waiting to be placed (owner decision 2026-10-01,
+// matching the reference game). With more than seven cards in hand the turn
+// stays open: the player still chooses which cards go back to the deck.
+func (s *State) autoEndTurn() []Event {
+	if s.Phase != PhasePlay || s.PlaysUsed < MaxPlays || len(s.Players[s.Active].Hand) > HandLimit {
+		return nil
+	}
+	events, err := s.endTurn(s.Active, EndTurn{})
+	if err != nil {
+		return nil
+	}
+	for _, e := range events {
+		if e.Kind == "turn_ended" {
+			e.Data["auto"] = true
+		}
+	}
+	return events
 }
 
 // requirePlay checks the active player may spend n plays now.
@@ -168,6 +243,11 @@ func (s *State) place(seat int, id CardID, setID string, color Color) error {
 	}
 	if !c.CanBe(color) {
 		return reject(CodeIllegal, "%s cannot be %s", id, color)
+	}
+	// A card joins the open set of its color rather than starting a second
+	// one (owner decision 2026-10-01).
+	if open := p.openSet(color); open != "" {
+		return s.place(seat, id, open, color)
 	}
 	p.Sets = append(p.Sets, PropertySet{ID: s.newSetID(), Color: color, Cards: []CardID{id}})
 	return nil

@@ -170,7 +170,8 @@ Repeat the drill every quarter and after any schema change.
 - **Rollback.** Migrations roll back one step at a time with `cardplay migrate-down`, which is disabled in production. Test down migrations in staging (CI checks up/down/up on every change). In production, prefer a forward fix or a restore.
 - **Background jobs.** These run inside every API instance:
   - every 5 s: host transfer, match presence sweeps and turn timeouts;
-  - hourly: purge of expired chat, outbox, sessions and login devices, and match retention (90 days).
+  - every minute: deletion of rooms nobody has had open for an hour (with their games);
+  - hourly: purge of expired chat, outbox, sessions and login devices, guests unused for 7 days, and the match retention safety net.
   
   No separate worker is needed.
 - **Secrets.** `DATABASE_URL`, `SMTP_PASSWORD` and `SEED_PASSWORD` come from the environment or secret store only. `seed` and `migrate-down` refuse to run in production.

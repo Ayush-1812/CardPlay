@@ -6,17 +6,24 @@ import (
 )
 
 // A04: zero to three plays; the fourth is rejected; Pass Go draws do not
-// restore plays; a third-play Pass Go still requires hand reduction.
+// restore plays; a third-play Pass Go still requires hand reduction. The
+// turn stays open after three plays only while the hand is over seven
+// (otherwise it ends automatically; see TestAutoEndTurn).
 func TestPlayBudget(t *testing.T) {
-	hand := []CardID{money(1, 1), money(1, 2), act(PassGo, 1), money(1, 3)}
+	hand := []CardID{money(1, 1), money(1, 2), act(PassGo, 1), money(1, 3), money(2, 1), money(2, 2), money(2, 3), money(2, 4), money(2, 5)}
 	s := fixture(t, seat{Hand: hand}, seat{})
 	s = ok(t, s, 0, Bank{Card: money(1, 1)})
 	s = ok(t, s, 0, Bank{Card: money(1, 2)})
 	s = ok(t, s, 0, PlayPassGo{Card: act(PassGo, 1)})
-	if s.PlaysUsed != 3 || len(s.Players[0].Hand) != 3 {
-		t.Fatalf("plays %d hand %d", s.PlaysUsed, len(s.Players[0].Hand))
+	if s.PlaysUsed != 3 || len(s.Players[0].Hand) != 8 || s.Active != 0 {
+		t.Fatalf("plays %d hand %d active %d", s.PlaysUsed, len(s.Players[0].Hand), s.Active)
 	}
 	rejected(t, s, 0, Bank{Card: money(1, 3)}, CodeNoPlays)
+	rejected(t, s, 0, EndTurn{}, CodeIllegal) // one card must go back first
+	s = ok(t, s, 0, EndTurn{Return: []CardID{money(1, 3)}})
+	if s.Active != 1 {
+		t.Fatal("returning the excess should end the turn")
+	}
 	// Rent plus two doublers needs three plays at once.
 	r := fixture(t, seat{Hand: []CardID{money(1, 1), rent2(DarkBlue, Green, 1), act(DoubleRent, 1), act(DoubleRent, 2)}, Sets: []PropertySet{set("g", Green, prop("pacific-avenue"))}}, seat{})
 	r = ok(t, r, 0, Bank{Card: money(1, 1)})
@@ -266,5 +273,104 @@ func TestRearrange(t *testing.T) {
 		p = ok(t, p, 0, PlayDebtCollector{Card: act(DebtCollector, 1), Target: 1})
 		rejected(t, p, 0, Rearrange{}, CodeWrongPhase)
 		rejected(t, p, 0, EndTurn{}, CodeWrongPhase)
+	})
+}
+
+// Owner decision 2026-10-01: the turn ends by itself once three plays are
+// spent, nothing is pending or waiting to be placed, and the hand needs no
+// discard.
+func TestAutoEndTurn(t *testing.T) {
+	t.Run("third play ends the turn", func(t *testing.T) {
+		s := fixture(t, seat{Hand: []CardID{money(1, 1), money(1, 2), money(1, 3), money(2, 1)}}, seat{})
+		s = ok(t, s, 0, Bank{Card: money(1, 1)})
+		s = ok(t, s, 0, Bank{Card: money(1, 2)})
+		if s.Active != 0 {
+			t.Fatal("two plays must not end the turn")
+		}
+		next, events, err := Apply(s, 0, Bank{Card: money(1, 3)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next.Active != 1 || next.PlaysUsed != 0 || next.Phase != PhasePlay {
+			t.Fatalf("active %d plays %d phase %s", next.Active, next.PlaysUsed, next.Phase)
+		}
+		auto := slices.ContainsFunc(events, func(e Event) bool { return e.Kind == "turn_ended" && e.Data["auto"] == true })
+		if !auto {
+			t.Fatalf("no automatic turn_ended event: %v", events)
+		}
+	})
+
+	t.Run("an action as the third play ends the turn once it resolves", func(t *testing.T) {
+		s := fixture(t,
+			seat{Hand: []CardID{money(1, 1), money(1, 2), act(DebtCollector, 1)}},
+			seat{Bank: []CardID{money(5, 1)}},
+		)
+		s = ok(t, s, 0, Bank{Card: money(1, 1)})
+		s = ok(t, s, 0, Bank{Card: money(1, 2)})
+		s = ok(t, s, 0, PlayDebtCollector{Card: act(DebtCollector, 1), Target: 1})
+		if s.Active != 0 || s.Phase != PhaseResponse {
+			t.Fatal("the turn must wait for the response")
+		}
+		s = ok(t, s, 1, accept(s))
+		s = ok(t, s, 1, pay(s, money(5, 1)))
+		if s.Active != 1 {
+			t.Fatal("the turn should end once the payment settles")
+		}
+	})
+
+	t.Run("a stolen single-color card is placed and the turn ends", func(t *testing.T) {
+		s := fixture(t,
+			seat{Hand: []CardID{money(1, 1), money(1, 2), act(SlyDeal, 1)}},
+			seat{Sets: []PropertySet{set("r", Red, redCards[0])}},
+		)
+		s = ok(t, s, 0, Bank{Card: money(1, 1)})
+		s = ok(t, s, 0, Bank{Card: money(1, 2)})
+		s = ok(t, s, 0, PlaySlyDeal{Card: act(SlyDeal, 1), Target: 1, Take: redCards[0]})
+		s = ok(t, s, 1, accept(s))
+		if s.Active != 1 || s.Players[0].openSet(Red) == "" {
+			t.Fatal("the stolen card should be placed and the turn ended")
+		}
+	})
+
+	t.Run("a stolen wild is placed before the turn ends", func(t *testing.T) {
+		s := fixture(t,
+			seat{Hand: []CardID{money(1, 1), money(1, 2), act(SlyDeal, 1)}},
+			seat{Sets: []PropertySet{set("r", Red, wild(Red, Yellow, 1))}},
+		)
+		s = ok(t, s, 0, Bank{Card: money(1, 1)})
+		s = ok(t, s, 0, Bank{Card: money(1, 2)})
+		s = ok(t, s, 0, PlaySlyDeal{Card: act(SlyDeal, 1), Target: 1, Take: wild(Red, Yellow, 1)})
+		s = ok(t, s, 1, accept(s))
+		if s.Phase != PhasePlacement || s.Active != 0 {
+			t.Fatal("the thief must place the card first")
+		}
+		s = ok(t, s, 0, PlaceReceived{Card: wild(Red, Yellow, 1), Color: Red})
+		if s.Active != 1 {
+			t.Fatal("placing the last received card should end the turn")
+		}
+	})
+
+	t.Run("over seven cards the player still chooses what to return", func(t *testing.T) {
+		hand := []CardID{money(1, 1), money(1, 2), money(1, 3), money(2, 1), money(2, 2), money(2, 3), money(2, 4), money(2, 5), money(3, 1), money(3, 2), money(3, 3)}
+		s := fixture(t, seat{Hand: hand}, seat{})
+		for _, c := range hand[:3] {
+			s = ok(t, s, 0, Bank{Card: c})
+		}
+		if s.Active != 0 || len(s.Players[0].Hand) != 8 {
+			t.Fatal("the turn must stay open for the discard choice")
+		}
+	})
+
+	t.Run("winning on the third play ends the game, not the turn", func(t *testing.T) {
+		s := fixture(t,
+			seat{Hand: []CardID{money(1, 1), money(1, 2), brownCards[1]}, Sets: []PropertySet{set("b", Brown, brownCards[0]), set("d", DarkBlue, darkBlueCards...), set("u", Utility, utilityCards...)}},
+			seat{},
+		)
+		s = ok(t, s, 0, Bank{Card: money(1, 1)})
+		s = ok(t, s, 0, Bank{Card: money(1, 2)})
+		s = ok(t, s, 0, PlayProperty{Card: brownCards[1], Set: "b"})
+		if s.Phase != PhaseFinished || s.Winner == nil || *s.Winner != 0 {
+			t.Fatalf("phase %s winner %v", s.Phase, s.Winner)
+		}
 	})
 }

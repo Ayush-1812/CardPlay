@@ -111,23 +111,18 @@ func TestTimeoutActionChoices(t *testing.T) {
 			t.Fatalf("got %#v", a)
 		}
 		s = ok(t, s, 1, a)
-		// The collector must now place the received property.
-		if s.Phase != PhasePlacement {
+		// The received single-color property is placed for the collector.
+		if s.Phase != PhasePlay || s.Players[0].openSet(Brown) == "" {
 			t.Fatalf("phase %s", s.Phase)
 		}
-		a, _ = s.TimeoutAction(0)
-		if pr := a.(PlaceReceived); pr.Card != prop("baltic-avenue") || pr.Color != Brown {
-			t.Fatalf("got %#v", a)
-		}
-		ok(t, s, 0, a)
 	})
 
 	t.Run("received cards join an incomplete set of a legal color; multicolor wilds stay unassigned", func(t *testing.T) {
 		s := fixture(t,
-			seat{Hand: []CardID{act(SlyDeal, 1), act(SlyDeal, 2)}, Sets: []PropertySet{set("s1", Brown, prop("mediterranean-avenue"))}},
-			seat{Sets: []PropertySet{set("s2", Brown, prop("baltic-avenue"))}, Unassigned: []CardID{rainbow(1)}},
+			seat{Hand: []CardID{act(SlyDeal, 1), act(SlyDeal, 2)}, Sets: []PropertySet{set("s1", Red, redCards[0])}},
+			seat{Sets: []PropertySet{set("s2", Yellow, wild(Red, Yellow, 1))}, Unassigned: []CardID{rainbow(1)}},
 		)
-		for i, take := range []CardID{prop("baltic-avenue"), rainbow(1)} {
+		for i, take := range []CardID{wild(Red, Yellow, 1), rainbow(1)} {
 			s = ok(t, s, 0, PlaySlyDeal{Card: act(SlyDeal, i+1), Target: 1, Take: take})
 			s = ok(t, s, 1, accept(s))
 			if s.Phase != PhasePlacement {
@@ -136,14 +131,14 @@ func TestTimeoutActionChoices(t *testing.T) {
 			a, _ := s.TimeoutAction(0)
 			pr := a.(PlaceReceived)
 			if i == 0 && pr.Set != "s1" {
-				t.Fatalf("property should join the incomplete brown set: %#v", a)
+				t.Fatalf("wild should join the incomplete red set: %#v", a)
 			}
 			if i == 1 && (pr.Card != rainbow(1) || pr.Set != "" || pr.Color != "") {
 				t.Fatalf("multicolor wild should stay unassigned: %#v", a)
 			}
 			s = ok(t, s, 0, a)
 		}
-		if s.Phase != PhasePlay || len(s.Players[0].Unassigned) != 1 || s.Players[0].CompleteColors() != 1 {
+		if s.Phase != PhasePlay || len(s.Players[0].Unassigned) != 1 || len(s.Players[0].Sets[0].Cards) != 2 {
 			t.Fatal("placement did not finish as expected")
 		}
 	})

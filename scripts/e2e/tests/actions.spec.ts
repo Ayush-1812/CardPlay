@@ -1,10 +1,22 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { expireTurnClock, stageDeal } from "./db";
-import { createRoom, expectNoLeaks, latestState, makeFriends, newPlayer, registerViaAPI, userIDOf, type Player } from "./helpers";
+import {
+  createRoom,
+  expectNoLeaks,
+  joinInvitation,
+  latestState,
+  makeFriends,
+  newPlayer,
+  registerViaAPI,
+  tapHandCard,
+  userIDOf,
+  type Player,
+} from "./helpers";
 
-// Action cards, responses, payments, placement and reorganizing, through the
-// real screens. The deal is staged at revision 0 (before any move) so every
-// card needed is in hand; everything after that is played through the UI.
+// Action cards, responses, payments, placement and moving cards, through
+// the real sheets. The deal is staged at revision 0 (before any move) so
+// every card needed is in hand; everything after that goes through the UI.
+// Turns end by themselves after the third play.
 test.describe.serial("action cards through the UI", () => {
   let one: Player, two: Player;
   // a: the player whose turn it is first; b: the other one.
@@ -14,21 +26,12 @@ test.describe.serial("action cards through the UI", () => {
   const pub = (p: Player) => latestState(p).view.public;
   const me = (p: Player) => pub(p).players[latestState(p).view.self.seat];
   const rev = (p: Player) => latestState(p)?.revision ?? -1;
+  const myTurn = (p: Player) => pub(p).active === latestState(p).view.self.seat;
   // Waits until both players have seen the state after the next move.
   const settle = async (from: number) => {
     for (const p of [a, b]) await expect.poll(() => rev(p)).toBeGreaterThan(from);
   };
-  const handCard = (p: Player, id: string): Locator => {
-    const i = latestState(p).view.self.hand.indexOf(id);
-    if (i < 0) throw new Error(`${p.name} does not hold ${id}`);
-    return p.page.locator(".hand-card").nth(i);
-  };
-  const useCard = async (p: Player, id: string) => {
-    const card = handCard(p, id);
-    await card.focus();
-    await card.press("Enter");
-    return p.page.locator(".hand-actions");
-  };
+  const dialog = (p: Player, name?: string) => p.page.getByRole("dialog", name ? { name } : undefined);
 
   test.beforeAll(async ({ browser }) => {
     one = await newPlayer(browser, "ada");
@@ -38,11 +41,9 @@ test.describe.serial("action cards through the UI", () => {
       await registerViaAPI(p);
     }
     await makeFriends(one, two);
-    await one.page.reload();
     await createRoom(one, "Action table", 2);
-    await one.page.locator(".friend-row", { hasText: `@${two.handle}` }).getByRole("button", { name: "Invite" }).click();
-    await two.page.reload();
-    await two.page.locator(".friend-row", { hasText: "Action table" }).getByRole("button", { name: "Join →" }).click();
+    await one.page.locator(".invite-panel .friend-row", { hasText: `@${two.handle}` }).getByRole("button", { name: "Invite" }).click();
+    await joinInvitation(two, "Action table");
     for (const p of [one, two]) await p.page.getByRole("button", { name: "I'm ready" }).click();
     await one.page.getByRole("button", { name: "Start match" }).click();
     for (const p of [one, two]) await expect.poll(() => latestState(p)?.status).toBe("playing");
@@ -77,26 +78,35 @@ test.describe.serial("action cards through the UI", () => {
     for (const p of [one, two]) await p?.context.close();
   });
 
-  test("a multicolor wild defaults to the set closest to completion", async () => {
-    const dialog = await useCard(a, "wild-multicolor-1");
-    await expect(dialog.locator("select")).toHaveValue(/^set:/);
-    await expect(dialog.locator("select option:checked")).toHaveText("Light blue set (2/3)");
+  test("a multicolor wild offers only the sets it can join, best first", async () => {
+    await tapHandCard(a, "wild-multicolor-1");
+    const sheet = dialog(a);
+    await expect(sheet.getByRole("heading", { name: "Where should this card go?" })).toBeVisible();
+    // The incomplete light blue set and "Decide later"; no new set of every
+    // color, and the complete dark blue set has no room.
+    await expect(sheet.locator(".dest-tile")).toHaveCount(2);
+    const best = sheet.locator(".dest-tile").first();
+    await expect(best).toContainText("Light blue set");
+    await expect(best).toContainText("Best");
+    await expect(best).toContainText("Completes the set");
+    await expect(sheet.locator(".dest-tile").last()).toContainText("Decide later");
     await a.page.keyboard.press("Escape");
+    await expect(dialog(a)).toHaveCount(0);
   });
 
-  test("It's My Birthday: accept, then choose payment", async () => {
+  test("It's My Birthday: the target pays from one Action! sheet", async () => {
     const r = rev(a);
-    await (await useCard(a, "action-birthday-1")).getByRole("button", { name: "Everyone pays you 2M" }).click();
+    await tapHandCard(a, "action-birthday-1");
+    await dialog(a).getByRole("button", { name: "Everyone pays you 2M" }).click();
     await settle(r);
-    const response = b.page.getByRole("region", { name: "Your response" });
-    await expect(response).toContainText("It's My Birthday on you");
-    await response.getByRole("button", { name: "Accept" }).click();
-    const payment = b.page.getByRole("region", { name: "Payment" });
-    await expect(payment).toContainText("You owe 2M");
-    await expect(payment.getByRole("button", { name: /^Pay/ })).toBeDisabled();
-    await payment.getByRole("button", { name: "2M, 2M" }).click();
+    const prompt = dialog(b, "Your response");
+    await expect(prompt.getByRole("heading", { name: "Action!" })).toBeVisible();
+    await expect(prompt).toContainText("birthday: pay 2M");
+    const pay = prompt.getByRole("button", { name: /^Pay/ });
+    await expect(pay).toBeDisabled();
+    await prompt.getByRole("button", { name: "2M, 2M" }).click();
     const r2 = rev(b);
-    await payment.getByRole("button", { name: "Pay 2M" }).click();
+    await prompt.getByRole("button", { name: "Pay 2M" }).click();
     await settle(r2);
     expect(me(a).bank_value).toBe(7);
     expect(me(b).bank).toEqual(["money-1m-2"]);
@@ -105,13 +115,14 @@ test.describe.serial("action cards through the UI", () => {
 
   test("Debt Collector blocked by Just Say No; the source lets it stand", async () => {
     const r = rev(a);
-    await (await useCard(a, "action-debt_collector-1")).getByRole("button", { name: "Collect 5M" }).click();
+    await tapHandCard(a, "action-debt_collector-1");
+    // One opponent: no player to choose.
+    await dialog(a).getByRole("button", { name: "Collect 5M from a player" }).click();
     await settle(r);
-    const response = b.page.getByRole("region", { name: "Your response" });
     const r2 = rev(b);
-    await response.getByRole("button", { name: "Just Say No!" }).click();
+    await dialog(b, "Your response").getByRole("button", { name: "Just Say No!" }).click();
     await settle(r2);
-    const counter = a.page.getByRole("region", { name: "Your response" });
+    const counter = dialog(a, "Your response");
     await expect(counter).toContainText("said Just Say No");
     // The source holds no Just Say No, so only letting it stand is offered.
     await expect(counter.getByRole("button", { name: "Just Say No!" })).toHaveCount(0);
@@ -123,118 +134,113 @@ test.describe.serial("action cards through the UI", () => {
     expect(pub(a).center_pile).toEqual(expect.arrayContaining(["action-debt_collector-1", "action-just_say_no-1"]));
   });
 
-  test("Sly Deal: steal a property, then place the received card", async () => {
+  test("Sly Deal: one stealable card is named on the button; it lands by itself", async () => {
     const r = rev(a);
-    const dialog = await useCard(a, "action-sly_deal-1");
-    await dialog.getByLabel("Take").selectOption("property-st-james-place");
-    await dialog.getByRole("button", { name: "Steal" }).click();
+    await tapHandCard(a, "action-sly_deal-1");
+    // One player with one card outside a complete set: no picker at all.
+    await dialog(a).getByRole("button", { name: `Steal St. James Place from ${b.name}` }).click();
     await settle(r);
+    const prompt = dialog(b, "Your response");
+    await expect(prompt).toContainText("wants to steal your property");
+    await expect(prompt.locator(".trade-preview")).toContainText("They take");
     const r2 = rev(b);
-    await b.page.getByRole("region", { name: "Your response" }).getByRole("button", { name: "Accept" }).click();
+    await prompt.getByRole("button", { name: "Accept" }).click();
     await settle(r2);
-    const placement = a.page.getByRole("region", { name: "Place a received card" });
-    await expect(placement).toContainText("St. James Place");
-    await expect(placement.locator("select")).toHaveValue("new:orange");
-    const r3 = rev(a);
-    await placement.getByRole("button", { name: "Place card" }).click();
-    await settle(r3);
+    // A one-color property has one home, so nobody is asked where it goes.
+    await expect(dialog(a, "Place a received card")).toHaveCount(0);
     expect(me(a).sets.some((s: { color: string }) => s.color === "orange")).toBe(true);
     expect(me(b).sets.some((s: { color: string }) => s.color === "orange")).toBe(false);
-    // Three plays used: end the turn.
-    expect(pub(a).plays_left).toBe(0);
-    const r4 = rev(a);
-    await a.page.locator(".platter-actions").getByRole("button", { name: "End turn" }).click();
-    await settle(r4);
-    expect(pub(b).active).toBe(latestState(b).view.self.seat);
+    // Three plays spent and seven cards or fewer: the turn ended by itself.
+    await expect.poll(() => myTurn(b)).toBe(true);
+    await expect(b.page.locator(".game-status strong")).toHaveText(/^Your turn/);
   });
 
-  test("Rent: the payer gives properties, the collector places them", async () => {
+  test("Rent: one matching set charges in one tap; paid properties land by themselves", async () => {
     const r = rev(b);
-    const dialog = await useCard(b, "rent-light_blue-brown-1");
-    await dialog.getByLabel("Charge rent on").selectOption({ label: "Brown (2 cards, 2M)" });
-    await dialog.getByRole("button", { name: "Charge rent to everyone" }).click();
+    await tapHandCard(b, "rent-light_blue-brown-1");
+    // Only the brown set matches, so there is no set to choose.
+    await dialog(b).getByRole("button", { name: "Charge Brown rent (2M)" }).click();
     await settle(r);
+    const payment = dialog(a, "Your response");
+    await expect(payment).toContainText("charges you 2M rent");
+    await payment.getByRole("button", { name: /^Oriental Avenue/ }).click();
+    await payment.getByRole("button", { name: /^Vermont Avenue/ }).click();
     const r2 = rev(a);
-    await a.page.getByRole("region", { name: "Your response" }).getByRole("button", { name: "Accept" }).click();
-    await settle(r2);
-    const payment = a.page.getByRole("region", { name: "Payment" });
-    await expect(payment).toContainText("You owe 2M");
-    await payment.getByRole("button", { name: "Oriental Avenue, 1M" }).click();
-    await payment.getByRole("button", { name: "Vermont Avenue, 1M" }).click();
-    const r3 = rev(a);
     await payment.getByRole("button", { name: "Pay 2M" }).click();
-    await settle(r3);
-    const placement = b.page.getByRole("region", { name: "Place a received card" });
-    for (let i = 0; i < 2; i++) {
-      const r4 = rev(b);
-      await placement.getByRole("button", { name: "Place card" }).click();
-      await settle(r4);
-    }
+    await settle(r2);
+    await expect(dialog(b, "Place a received card")).toHaveCount(0);
     const lightBlue = me(b).sets.find((s: { color: string }) => s.color === "light_blue");
     expect(lightBlue.cards.sort()).toEqual(["property-oriental-avenue", "property-vermont-avenue"]);
     expect(pub(b).phase).toBe("play");
   });
 
-  test("Reorganize: move a wild card between sets without using a play", async () => {
+  test("Tap a wild on your table to move it, free", async () => {
     const plays = pub(b).plays_left;
-    await b.page.locator(".platter-actions").getByRole("button", { name: "Reorganize properties" }).click();
-    const dialog = b.page.getByRole("dialog", { name: "Reorganize properties" });
-    await dialog.getByLabel("Wild Light blue/Brown").selectOption({ label: "Light blue set (2/3)" });
+    await b.page.locator(".my-board").getByRole("button", { name: "Move Wild Light blue/Brown" }).click();
+    const sheet = dialog(b, "Move Wild Light blue/Brown");
+    // Only the light blue set: splitting brown into a new set is not offered.
+    await expect(sheet.locator(".dest-tile")).toHaveCount(1);
     const r = rev(b);
-    await dialog.getByRole("button", { name: "Save arrangement" }).click();
-    await settle(r);
+    await sheet.getByRole("button", { name: /^Light blue set/ }).click();
+    await expect.poll(() => rev(b)).toBeGreaterThan(r);
     const sets = me(b).sets as { color: string; cards: string[]; complete: boolean }[];
     expect(sets.find((s) => s.color === "light_blue")).toMatchObject({ complete: true });
     expect(sets.find((s) => s.color === "brown")?.cards).toEqual(["property-mediterranean-avenue"]);
     expect(pub(b).plays_left).toBe(plays);
   });
 
-  test("Forced Deal: swap properties; both players place what they received", async () => {
+  test("Forced Deal: with one card on each side the swap is a single button", async () => {
     const r = rev(b);
-    const dialog = await useCard(b, "action-forced_deal-1");
-    await dialog.getByLabel("Take").selectOption("property-st-james-place");
-    await dialog.getByLabel("Give").selectOption("property-mediterranean-avenue");
-    await dialog.getByRole("button", { name: "Swap" }).click();
+    await tapHandCard(b, "action-forced_deal-1");
+    await dialog(b)
+      .getByRole("button", { name: `Swap your Mediterranean Avenue for ${a.name}'s St. James Place` })
+      .click();
     await settle(r);
     const r2 = rev(a);
-    await a.page.getByRole("region", { name: "Your response" }).getByRole("button", { name: "Accept" }).click();
+    await dialog(a, "Your response").getByRole("button", { name: "Accept" }).click();
     await settle(r2);
-    for (const p of [a, b]) {
-      const r3 = rev(p);
-      await p.page.getByRole("region", { name: "Place a received card" }).getByRole("button", { name: "Place card" }).click();
-      await expect.poll(() => rev(p)).toBeGreaterThan(r3);
-    }
+    for (const p of [a, b]) await expect(dialog(p, "Place a received card")).toHaveCount(0);
     await expect.poll(() => pub(b).phase).toBe("play");
     const colors = (p: Player) => (me(p).sets as { color: string }[]).map((x) => x.color).sort();
     expect(colors(a)).toEqual(["brown", "dark_blue"]);
     expect(colors(b)).toEqual(["light_blue", "orange"]);
   });
 
-  test("Deal Breaker: take a complete set", async () => {
+  test("Deal Breaker takes a complete set; the third play ends the turn", async () => {
     const r = rev(b);
-    const dialog = await useCard(b, "action-deal_breaker-1");
-    await dialog.getByLabel("Complete set").selectOption({ label: "Dark blue" });
-    await dialog.getByRole("button", { name: "Take the set" }).click();
+    await tapHandCard(b, "action-deal_breaker-1");
+    // One complete set to take: named on the button.
+    await dialog(b).getByRole("button", { name: `Take ${a.name}'s Dark blue set` }).click();
     await settle(r);
+    await expect(dialog(a, "Your response")).toContainText("take your complete set");
     const r2 = rev(a);
-    await a.page.getByRole("region", { name: "Your response" }).getByRole("button", { name: "Accept" }).click();
+    await dialog(a, "Your response").getByRole("button", { name: "Accept" }).click();
     await settle(r2);
     const darkBlue = (me(b).sets as { color: string; complete: boolean }[]).find((x) => x.color === "dark_blue");
     expect(darkBlue?.complete).toBe(true);
     expect((me(a).sets as { color: string }[]).some((x) => x.color === "dark_blue")).toBe(false);
-    expect(pub(b).plays_left).toBe(0);
+    await expect.poll(() => myTurn(a)).toBe(true);
+  });
+
+  test("money banks with a single tap", async () => {
+    const before = me(a).bank_value;
+    const r = rev(a);
+    await tapHandCard(a, "money-1m-1");
+    await expect.poll(() => rev(a)).toBeGreaterThan(r);
+    await expect(dialog(a)).toHaveCount(0);
+    expect(me(a).bank_value).toBe(before + 1);
   });
 
   test("an idle player's turn is finished by the table when the clock runs out", async () => {
-    await expect(b.page.locator(".turn-clock")).toContainText(/You \d:\d\d/);
-    await expect(a.page.locator(".turn-clock")).toContainText(/\d:\d\d/);
-    const r = rev(a);
+    await expect(a.page.locator(".turn-clock")).toContainText(/You \d:\d\d/);
+    await expect(b.page.locator(".turn-clock")).toContainText(/\d:\d\d/);
+    const r = rev(b);
     await expireTurnClock(match);
     // The server sweep runs every 5 seconds.
-    await expect.poll(() => rev(a), { timeout: 20_000 }).toBeGreaterThan(r);
-    expect(pub(a).active).toBe(latestState(a).view.self.seat);
-    await expect(a.page.locator(".game-status strong")).toHaveText(/^Your turn/);
-    await expect(a.page.getByText(/ran out of time, so the table made the default move/).first()).toBeVisible();
+    await expect.poll(() => rev(b), { timeout: 20_000 }).toBeGreaterThan(r);
+    expect(myTurn(b)).toBe(true);
+    await expect(b.page.locator(".game-status strong")).toHaveText(/^Your turn/);
+    await expect(b.page.getByText(/ran out of time, so the table made the default move/).first()).toBeAttached();
   });
 
   test("no hidden card reached the other player at any revision", async () => {

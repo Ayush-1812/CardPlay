@@ -442,6 +442,20 @@ func (s *State) payDebt(seat int, a Pay) ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Paying while a charge still awaits your response accepts it first: the
+	// same two decisions as one move, so the web client can offer a single
+	// "Pay" next to "Just Say No". Apply runs on a clone, so a Pay sent for an
+	// action that is not a charge is rejected with no effect.
+	var accepted []Event
+	if t.Stage == StageRespond && seat == t.Seat {
+		if accepted, err = s.accept(seat, Accept{Pending: a.Pending, Step: a.Step}); err != nil {
+			return nil, err
+		}
+		if s.Pending == nil {
+			return nil, reject(CodeWrongPhase, "no payment is due")
+		}
+		t = &s.Pending.Targets[s.Pending.Current]
+	}
 	if t.Stage != StagePay {
 		return nil, reject(CodeWrongPhase, "no payment is due")
 	}
@@ -491,6 +505,6 @@ func (s *State) payDebt(seat int, a Pay) ([]Event, error) {
 	t.Stage = StageDone
 	t.Outcome = "paid"
 	s.Pending.Step++
-	events := []Event{{Kind: "paid", Audience: Public, Data: map[string]any{"pending": s.Pending.ID, "seat": seat, "cards": a.Cards, "value": paid, "owed": t.Owed}}}
+	events := append(accepted, Event{Kind: "paid", Audience: Public, Data: map[string]any{"pending": s.Pending.ID, "seat": seat, "cards": a.Cards, "value": paid, "owed": t.Owed}})
 	return append(events, s.advance()...), nil
 }

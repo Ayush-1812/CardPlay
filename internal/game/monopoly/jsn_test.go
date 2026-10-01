@@ -28,11 +28,11 @@ func TestJustSayNoParity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := fixture(t,
 				seat{Hand: []CardID{act(SlyDeal, 1), jsn2, money(1, 1), money(1, 2)}, Bank: []CardID{money(1, 3)}},
-				seat{Hand: []CardID{jsn1, jsn3}, Sets: []PropertySet{set("r", Red, redCards[0])}},
+				seat{Hand: []CardID{jsn1, jsn3}, Sets: []PropertySet{set("r", Red, wild(Red, Yellow, 1))}},
 			)
 			s = ok(t, s, 0, Bank{Card: money(1, 1)})
 			s = ok(t, s, 0, Bank{Card: money(1, 2)})
-			s = ok(t, s, 0, PlaySlyDeal{Card: act(SlyDeal, 1), Target: 1, Take: redCards[0]})
+			s = ok(t, s, 0, PlaySlyDeal{Card: act(SlyDeal, 1), Target: 1, Take: wild(Red, Yellow, 1)})
 			if s.PlaysUsed != MaxPlays {
 				t.Fatal("setup should exhaust plays")
 			}
@@ -40,15 +40,20 @@ func TestJustSayNoParity(t *testing.T) {
 			for _, who := range tc.chain {
 				s = ok(t, s, who, jsn(s, cards[who][0], ""))
 				cards[who] = cards[who][1:]
+				if s.PlaysUsed != MaxPlays {
+					t.Fatal("Just Say No must not consume plays")
+				}
 			}
 			waiting := s.WaitingFor()[0]
 			s = ok(t, s, waiting, accept(s))
-			_, kept := s.Players[1].locate(redCards[0])
-			if tc.blocked != kept || tc.blocked == has(s.Players[0].Incoming, redCards[0]) {
+			_, kept := s.Players[1].locate(wild(Red, Yellow, 1))
+			if tc.blocked != kept || tc.blocked == has(s.Players[0].Incoming, wild(Red, Yellow, 1)) {
 				t.Fatalf("blocked=%v but defender kept card=%v", tc.blocked, kept)
 			}
-			if s.PlaysUsed != MaxPlays {
-				t.Fatal("Just Say No must not consume plays")
+			// A blocked third play leaves nothing to place, so the turn ends
+			// by itself; a stolen wild waits for the thief to choose its color.
+			if tc.blocked != (s.Active == 1) {
+				t.Fatalf("blocked=%v but active seat is %d", tc.blocked, s.Active)
 			}
 			if got := len(s.Discard); got != 1+len(tc.chain) {
 				t.Fatalf("center pile has %d cards, want action + %d JSN", got, len(tc.chain))

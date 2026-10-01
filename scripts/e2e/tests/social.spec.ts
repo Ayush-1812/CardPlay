@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createRoom, makeFriends, newPlayer, registerViaAPI, registerViaUI, type Player } from "./helpers";
+import { createRoom, joinInvitation, makeFriends, newPlayer, registerViaAPI, registerViaUI, type Player } from "./helpers";
 
 // Registration, friends, rooms, both kinds of invitation, and lobby chat,
 // each step done by real browser sessions.
@@ -17,7 +17,7 @@ test.describe.serial("accounts, friends, rooms, invitations and chat", () => {
 
   test("registration with email verification, then sign-in", async () => {
     await registerViaUI(ana);
-    await expect(ana.page.getByText(`@${ana.handle}`).first()).toBeVisible();
+    await expect(ana.page.getByRole("button", { name: `Account: ${ana.name}` })).toBeVisible();
   });
 
   test("server-side validation; an unverified account cannot create rooms", async () => {
@@ -54,45 +54,43 @@ test.describe.serial("accounts, friends, rooms, invitations and chat", () => {
     await makeFriends(ana, ben);
     await makeFriends(ana, cy);
     // Searching for an unknown handle reveals nothing.
-    await ana.page.locator("#friend-handle").fill("nobody_" + Date.now());
-    await ana.page.getByRole("button", { name: "Find", exact: true }).click();
-    await expect(ana.page.locator('[role="alert"]').first()).toBeVisible();
+    await ana.page.getByRole("button", { name: "Friends", exact: true }).click();
+    const sheet = ana.page.getByRole("dialog", { name: "Friends" });
+    await sheet.locator("#friend-handle").fill("nobody_" + Date.now());
+    await sheet.getByRole("button", { name: "Find", exact: true }).click();
+    await expect(ana.page.locator('[role="alert"]').first()).toBeAttached();
+    await ana.page.keyboard.press("Escape");
   });
 
   test("room creation, a friend invitation and an invite link", async () => {
     await ana.page.reload();
     await createRoom(ana, "Friday cards", 3);
     // Direct invitation to a friend.
-    const inviteBen = ana.page.locator(".friend-row", { hasText: `@${ben.handle}` }).getByRole("button", { name: "Invite" });
+    const inviteBen = ana.page.locator(".invite-panel .friend-row", { hasText: `@${ben.handle}` }).getByRole("button", { name: "Invite" });
     await inviteBen.click();
     await expect(ana.page.getByText(`Invitation sent to @${ben.handle}.`)).toBeVisible();
-    await ben.page.reload();
-    const invite = ben.page.locator(".friend-row", { hasText: "Friday cards" });
-    await invite.getByRole("button", { name: "Join →" }).click();
-    await expect(ben.page.getByRole("heading", { level: 1, name: "Friday cards" })).toBeVisible();
-    // Invite link for the third seat.
-    await ana.page.getByRole("button", { name: "Create an invite link ↗" }).click();
-    const link = await ana.page.locator("input[readonly]").inputValue();
+    await joinInvitation(ben, "Friday cards");
+    // The waiting room offers its invite link straight away.
+    const link = await ana.page.getByLabel("Invite link").inputValue();
     expect(link).toMatch(/#invite=[0-9a-f]{64}$/);
-    await cy.page.goto("about:blank");
+    // Opening the link joins directly, even in a tab already on CardPlay.
     await cy.page.goto(link);
-    await expect(cy.page.locator('input[name="token"]')).toHaveValue(/^.{64}$/);
-    await cy.page.getByRole("button", { name: "Join a room" }).click();
     await expect(cy.page.getByRole("heading", { level: 1, name: "Friday cards" })).toBeVisible();
     // Every member sees all three seats live.
-    for (const p of [ana, ben, cy]) for (const q of [ana, ben, cy]) await expect(p.page.getByText(`@${q.handle}`).first()).toBeVisible();
-    // The room is full, so the link is no longer offered.
-    await expect(ana.page.getByText("This room is full.")).toBeVisible();
+    for (const p of [ana, ben, cy])
+      for (const q of [ana, ben, cy]) await expect(p.page.locator(".seat-list").getByText(q.name)).toBeVisible();
+    // The room is full, so no link is offered.
+    await expect(ana.page.getByText("The table is full.")).toBeVisible();
   });
 
   test("room chat is delivered live and plain text only", async () => {
-    await ben.page.locator('textarea[name="body"], input[name="body"]').fill("hi <b>all</b> 👋");
+    await ben.page.locator("#chat-body").fill("hi <b>all</b> 👋");
     await ben.page.getByRole("button", { name: "Send", exact: true }).click();
     for (const p of [ana, cy]) await expect(p.page.locator('[aria-label="Room chat"]').getByText("hi <b>all</b> 👋")).toBeVisible();
     // Rendered as text, never as markup.
     expect(await ana.page.locator('[aria-label="Room chat"] b').count()).toBe(0);
     // Hidden direction overrides are refused.
-    await cy.page.locator('textarea[name="body"], input[name="body"]').fill("evil‮txt.exe");
+    await cy.page.locator("#chat-body").fill("evil‮txt.exe");
     await cy.page.getByRole("button", { name: "Send", exact: true }).click();
     await expect(cy.page.locator('[role="alert"]').first()).toContainText(/plain text/);
   });
@@ -105,6 +103,9 @@ test.describe.serial("accounts, friends, rooms, invitations and chat", () => {
     await message.getByRole("button", { name: "Mute" }).click();
     await expect(ana.page.getByText(/is muted/)).toBeVisible();
     await expect(ana.page.locator('[aria-label="Room chat"]').getByText("hi <b>all</b>")).toHaveCount(0);
+    // Quick replies send with one tap.
+    await cy.page.locator(".quick-replies").getByRole("button", { name: "GG" }).click();
+    await expect(ben.page.locator('[aria-label="Room chat"] .message', { hasText: "GG" })).toBeVisible();
     // Muting hides messages only for the one who muted.
     await expect(cy.page.locator('[aria-label="Room chat"]').getByText("hi <b>all</b>")).toBeVisible();
     for (const p of [ana, ben, cy]) expect(p.errors, `${p.name} page errors`).toEqual([]);

@@ -55,6 +55,11 @@ The product owner decided these on 29 September 2026. Each adopts the rule speci
 
 | Turn timeout default move (not in the printed rules): the most passive legal move for the awaited seat, never a play from hand or a targeted action; payment bank-first, lowest value first | Owner decision 2026-09-30 (PRD P09) | `timeout.go` `TimeoutAction`, `Module.TimeoutMoves` | `TestTimeoutActionIsAlwaysLegal`, `TestTimeoutActionChoices` |
 
+| Turn ends by itself after the third play when nothing is pending and the hand needs no discard | Owner decision 2026-10-01 | `engine.go` `autoEndTurn` (run after every applied action) | `TestAutoEndTurn`, `TestPlayBudget`, `TestJustSayNoParity` |
+| Paying an open charge accepts it in the same move; a Pay for a non-charge is rejected with no effect | Owner decision 2026-10-01 | `pending.go` `payDebt` | `TestPayAcceptsAnOpenCharge` |
+| A card with no chosen set joins the fullest incomplete set of its color; a new set only when none has room | Owner decision 2026-10-01 | `engine.go` `place`, `openSet` | `TestPlacementJoinsOpenSet` |
+| Received one-color properties, and a multicolor wild with no set to join, are placed without asking; other wilds wait for a choice | Owner decision 2026-10-01 | `engine.go` `autoPlaceReceived` (run after every applied action) | `TestSlyDeal`, `TestForcedDeal`, `TestPaymentBreaksSets`, `TestReceivedMulticolorWild`, `TestOffTurnVictory` |
+
 ## Not in the engine
 
 - Six or more players (B1 p1: needs two packs). The release supports 2–5 players with one deck.

@@ -6,8 +6,10 @@ SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL;
 SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE;
 -- name: CreateSession :exec
 INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,$3);
+-- name: CreateGuest :one
+INSERT INTO users(email,handle,display_name,password_hash,email_verified,is_guest) VALUES ($1,$2,$3,'guest-no-password',false,true) RETURNING *;
 -- name: SessionUser :one
-SELECT u.id,u.handle,u.display_name,u.email,u.email_verified,s.expires_at
+SELECT u.id,u.handle,u.display_name,u.email,u.email_verified,u.is_guest,u.last_active_at,s.expires_at
 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.deleted_at IS NULL;
 -- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash=$1;
@@ -52,3 +54,14 @@ SELECT EXISTS(SELECT 1 FROM login_devices d JOIN users u ON u.id=d.user_id
 WHERE d.token_hash=sqlc.arg(token_hash) AND d.expires_at>now() AND u.email=sqlc.arg(email) AND u.deleted_at IS NULL);
 -- name: DeleteExpiredLoginDevices :exec
 DELETE FROM login_devices WHERE expires_at<=now();
+-- name: TouchUser :exec
+-- Records activity at most hourly. A guest's sessions slide forward, so a
+-- guest who keeps playing is never signed out.
+WITH touched AS (
+  UPDATE users u SET last_active_at=now() WHERE u.id=$1 AND u.last_active_at < now()-interval '1 hour' RETURNING u.id AS user_id,u.is_guest
+)
+UPDATE sessions s SET expires_at=greatest(s.expires_at, now()+interval '7 days')
+FROM touched t WHERE s.user_id=t.user_id AND t.is_guest;
+-- name: IdleGuests :many
+SELECT id FROM users WHERE is_guest AND deleted_at IS NULL AND last_active_at < now()-interval '7 days'
+ORDER BY last_active_at LIMIT 200;

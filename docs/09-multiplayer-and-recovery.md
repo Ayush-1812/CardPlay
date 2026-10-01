@@ -68,7 +68,7 @@ Covered by `TestTimeoutActionIsAlwaysLegal` (200 random games), `TestTimeoutActi
 | A player chooses **Leave match**, or deletes their account | The match is abandoned with no winner (`left`), and no cards are redistributed |
 | Three different complete sets on your turn | The match is `finished` with that winner (`won`) |
 
-When a match ends, the room returns to the lobby with readiness cleared, so a rematch needs everyone ready again and deals a fresh shuffle. The last result stays visible in the room. Intermediate snapshots of ended matches are pruned hourly, and ended matches are deleted after 90 days (P10). While a match runs, the room accepts no joins, kicks or setting changes, and invitations are revoked when it starts (P03, P04).
+When a match ends, the room returns to the lobby with readiness cleared, so a rematch needs everyone ready again and deals a fresh shuffle. The last result stays visible in the room. Rooms are temporary (P10, owner decision 2026-10-01). A room is deleted, with its chat, invitations and matches, when its last player leaves or after 1 hour with nobody connected. That sweep runs every minute on every instance, skipping a room being joined at that moment. The hourly retention jobs remain as a safety net. While a match runs, the room accepts no joins, kicks or setting changes, and invitations are revoked when it starts (P03, P04).
 
 ## Recovery after a server restart
 

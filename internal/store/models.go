@@ -166,6 +166,8 @@ type User struct {
 	EmailVerified bool       `json:"email_verified"`
 	CreatedAt     time.Time  `json:"created_at"`
 	DeletedAt     *time.Time `json:"deleted_at"`
+	IsGuest       bool       `json:"is_guest"`
+	LastActiveAt  time.Time  `json:"last_active_at"`
 }
 
 type UserBlock struct {

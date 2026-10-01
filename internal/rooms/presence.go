@@ -91,3 +91,10 @@ func (m *Module) transferAbsentHost(ctx context.Context, id string) error {
 	}
 	return tx.Commit(ctx)
 }
+
+// DeleteIdle deletes rooms nobody has had open for an hour, with their games
+// (owner decision 2026-10-01). It is safe for every API instance to run it.
+func (m *Module) DeleteIdle(ctx context.Context) (int, error) {
+	ids, err := store.New(m.DB).DeleteIdleRooms(ctx)
+	return len(ids), err
+}

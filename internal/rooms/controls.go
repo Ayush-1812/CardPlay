@@ -93,11 +93,10 @@ func (m *Module) Close(w http.ResponseWriter, r *http.Request) {
 	if _, ok := hostWaiting(w, r, q, id); !ok {
 		return
 	}
-	if err = q.CloseRoom(r.Context(), id); err == nil {
-		err = q.RevokeRoomInvitations(r.Context(), id)
-	}
-	if err == nil {
-		err = changed(r.Context(), q, id)
+	// Rooms are temporary (owner decision 2026-10-01). Members are told the
+	// room changed; they refetch it, find it gone, and return to the lobby.
+	if err = changed(r.Context(), q, id); err == nil {
+		err = q.DeleteRoom(r.Context(), id)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -252,24 +251,28 @@ func (m *Module) Leave(w http.ResponseWriter, r *http.Request) {
 	}
 	if room.HostID == actor {
 		if next := NextHost(members, actor); next != nil {
-			err = q.SetRoomHost(r.Context(), store.SetRoomHostParams{ID: id, HostID: next.ID})
-		} else {
-			err = q.CloseRoom(r.Context(), id)
-		}
-		if err != nil {
-			httpx.DBError(w, r, err)
-			return
+			if err = q.SetRoomHost(r.Context(), store.SetRoomHostParams{ID: id, HostID: next.ID}); err != nil {
+				httpx.DBError(w, r, err)
+				return
+			}
 		}
 	}
 	if _, err = q.RemoveMember(r.Context(), store.RemoveMemberParams{RoomID: id, UserID: actor}); err == nil {
 		// Links the departing member created must not keep admitting people.
 		err = q.RevokeTargetRoomInvitations(r.Context(), store.RevokeTargetRoomInvitationsParams{RoomID: id, TargetID: actor})
 	}
+	// Rooms are temporary (owner decision 2026-10-01): the last one out
+	// deletes the room and anything left in it.
+	var remaining int64
 	if err == nil {
-		err = q.ResetReady(r.Context(), id)
+		remaining, err = q.MemberCount(r.Context(), id)
 	}
-	if err == nil {
-		err = changed(r.Context(), q, id)
+	if err == nil && remaining == 0 {
+		err = q.DeleteRoom(r.Context(), id)
+	} else if err == nil {
+		if err = q.ResetReady(r.Context(), id); err == nil {
+			err = changed(r.Context(), q, id)
+		}
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

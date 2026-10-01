@@ -80,7 +80,11 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 			hash := httpx.Hash(c.Value)
 			u, err := store.New(m.DB).SessionUser(r.Context(), hash)
 			if err == nil {
-				r = r.WithContext(httpx.WithIdentity(r.Context(), httpx.Identity{ID: u.ID, Handle: u.Handle, DisplayName: u.DisplayName, Email: u.Email, Verified: u.EmailVerified, SessionHash: hash}))
+				// Activity is recorded at most hourly; it keeps a guest alive.
+				if time.Since(u.LastActiveAt) > time.Hour {
+					_ = store.New(m.DB).TouchUser(r.Context(), u.ID)
+				}
+				r = r.WithContext(httpx.WithIdentity(r.Context(), httpx.Identity{ID: u.ID, Handle: u.Handle, DisplayName: u.DisplayName, Email: u.Email, Verified: u.EmailVerified, Guest: u.IsGuest, SessionHash: hash}))
 			}
 		}
 		next.ServeHTTP(w, r)
@@ -242,7 +246,14 @@ func (m *Module) Login(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, 200, map[string]any{"id": u.ID, "handle": u.Handle, "display_name": u.DisplayName, "email_verified": u.EmailVerified})
 }
 func (m *Module) Logout(w http.ResponseWriter, r *http.Request) {
-	if err := store.New(m.DB).DeleteSession(r.Context(), httpx.Actor(r).SessionHash); err != nil {
+	if a := httpx.Actor(r); a.Guest {
+		// The session cookie is a guest's only key, so signing out ends the
+		// guest for good: leave rooms and games, then delete it.
+		if err := m.inTx(r.Context(), func(q *store.Queries) error { return DeleteAccount(r.Context(), q, a.ID) }); err != nil {
+			httpx.DBError(w, r, err)
+			return
+		}
+	} else if err := store.New(m.DB).DeleteSession(r.Context(), a.SessionHash); err != nil {
 		httpx.DBError(w, r, err)
 		return
 	}
@@ -251,7 +262,77 @@ func (m *Module) Logout(w http.ResponseWriter, r *http.Request) {
 }
 func (m *Module) Me(w http.ResponseWriter, r *http.Request) {
 	a := httpx.Actor(r)
-	httpx.JSON(w, 200, map[string]any{"id": a.ID, "handle": a.Handle, "display_name": a.DisplayName, "email": a.Email, "email_verified": a.Verified})
+	email := a.Email
+	if a.Guest {
+		email = ""
+	}
+	httpx.JSON(w, 200, map[string]any{"id": a.ID, "handle": a.Handle, "display_name": a.DisplayName, "email": email, "email_verified": a.Verified, "is_guest": a.Guest})
+}
+
+// GuestTTL is how long a guest lasts without use. Activity slides it.
+const GuestTTL = 7 * 24 * time.Hour
+
+// Guest starts a name-only account in this browser (owner decision
+// 2026-10-01). It has no email or password: the session cookie is its only
+// key. It may play and chat but not use friends, and it is deleted after
+// GuestTTL without use or when the guest signs out.
+func (m *Module) Guest(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		DisplayName string `json:"display_name"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	name, ok := httpx.CleanText(in.DisplayName, 24)
+	if !ok {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Choose a name of 1-24 characters, plain text only")
+		return
+	}
+	key := httpx.Token()
+	token := httpx.Token()
+	var u store.User
+	err := m.inTx(r.Context(), func(q *store.Queries) error {
+		var err error
+		u, err = q.CreateGuest(r.Context(), store.CreateGuestParams{Email: "guest+" + key[:32] + "@cardplay.invalid", Handle: "g_" + key[32:48], DisplayName: name})
+		if err != nil {
+			return err
+		}
+		return q.CreateSession(r.Context(), store.CreateSessionParams{TokenHash: httpx.Hash(token), UserID: u.ID, ExpiresAt: time.Now().Add(GuestTTL)})
+	})
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	// The database session decides validity and slides with use; the cookie
+	// just has to outlive it.
+	http.SetCookie(w, &http.Cookie{Name: CookieName, Value: token, Path: "/", HttpOnly: true, Secure: m.Config.SecureCookie, SameSite: http.SameSiteLaxMode, MaxAge: int((30 * 24 * time.Hour).Seconds())})
+	httpx.JSON(w, 201, map[string]any{"id": u.ID, "handle": u.Handle, "display_name": u.DisplayName, "email": "", "email_verified": false, "is_guest": true})
+}
+
+func (m *Module) inTx(ctx context.Context, fn func(q *store.Queries) error) error {
+	tx, err := m.DB.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := fn(store.New(tx)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// PurgeIdleGuests deletes guests unused for GuestTTL. It runs hourly.
+func (m *Module) PurgeIdleGuests(ctx context.Context) error {
+	ids, err := store.New(m.DB).IdleGuests(ctx)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := m.inTx(ctx, func(q *store.Queries) error { return DeleteAccount(ctx, q, id) }); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Module) issueAccountToken(w http.ResponseWriter, r *http.Request, purpose string) {
@@ -463,60 +544,11 @@ func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
 		httpx.DBError(w, r, err)
 		return
 	}
-	if !PasswordMatches(u.PasswordHash, in.Password) {
+	if !actor.Guest && !PasswordMatches(u.PasswordHash, in.Password) {
 		httpx.Error(w, r, 403, "INVALID_CREDENTIALS", "Incorrect password")
 		return
 	}
-	// Deleting an account during a match abandons it (PRD P09).
-	if err = matches.AbandonForDeparture(r.Context(), q, actor.ID); err != nil {
-		httpx.DBError(w, r, err)
-		return
-	}
-	if err = transferHostedRooms(r.Context(), q, actor.ID); err != nil {
-		httpx.DBError(w, r, err)
-		return
-	}
-	// Only hosted waiting rooms with nobody else seated remain to close.
-	closed, err := q.CloseHostedRooms(r.Context(), actor.ID)
-	if err != nil {
-		httpx.DBError(w, r, err)
-		return
-	}
-	for _, roomID := range closed {
-		if err = q.RevokeRoomInvitations(r.Context(), roomID); err == nil {
-			err = q.Enqueue(r.Context(), store.EnqueueParams{RoomID: roomID, Kind: "room.updated", Payload: []byte(`{}`)})
-		}
-		if err != nil {
-			httpx.DBError(w, r, err)
-			return
-		}
-	}
-	left, err := q.RemoveFromWaitingRooms(r.Context(), actor.ID)
-	if err != nil {
-		httpx.DBError(w, r, err)
-		return
-	}
-	for _, roomID := range left {
-		if err = q.ResetReady(r.Context(), roomID); err == nil {
-			err = q.BumpRoom(r.Context(), roomID)
-		}
-		if err == nil {
-			err = q.Enqueue(r.Context(), store.EnqueueParams{RoomID: roomID, Kind: "room.updated", Payload: []byte(`{}`)})
-		}
-		if err != nil {
-			httpx.DBError(w, r, err)
-			return
-		}
-	}
-	steps := []func(context.Context, string) error{q.RevokeUserInvitations, q.DeleteFriendships, q.DeleteBlocks, q.DeleteMutes, q.DeleteAccountTokens, q.RevokeAllSessions}
-	for _, step := range steps {
-		if err = step(r.Context(), actor.ID); err != nil {
-			httpx.DBError(w, r, err)
-			return
-		}
-	}
-	err = q.AnonymizeUser(r.Context(), store.AnonymizeUserParams{ID: actor.ID, PasswordHash: PasswordHash(httpx.Token())})
-	if err == nil {
+	if err = DeleteAccount(r.Context(), q, actor.ID); err == nil {
 		err = tx.Commit(r.Context())
 	}
 	if err != nil {
@@ -525,6 +557,61 @@ func (m *Module) DeleteMe(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: CookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: m.Config.SecureCookie, SameSite: http.SameSiteLaxMode})
 	w.WriteHeader(204)
+}
+
+// DeleteAccount removes a user from every room and game and anonymizes the
+// account, inside the caller's transaction. It serves account deletion,
+// guest sign-out and idle-guest cleanup. Rooms left empty are deleted
+// (rooms are temporary, owner decision 2026-10-01).
+func DeleteAccount(ctx context.Context, q *store.Queries, userID string) error {
+	if _, err := q.UserByIDForUpdate(ctx, userID); err != nil {
+		return err
+	}
+	// Deleting an account during a match abandons it (PRD P09).
+	if err := matches.AbandonForDeparture(ctx, q, userID); err != nil {
+		return err
+	}
+	if err := transferHostedRooms(ctx, q, userID); err != nil {
+		return err
+	}
+	// Hosted waiting rooms with nobody else seated go away entirely.
+	closed, err := q.CloseHostedRooms(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, roomID := range closed {
+		if err := q.DeleteRoom(ctx, roomID); err != nil {
+			return err
+		}
+	}
+	left, err := q.RemoveFromWaitingRooms(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, roomID := range left {
+		n, err := q.MemberCount(ctx, roomID)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			err = q.DeleteRoom(ctx, roomID)
+		} else if err = q.ResetReady(ctx, roomID); err == nil {
+			if err = q.BumpRoom(ctx, roomID); err == nil {
+				err = q.Enqueue(ctx, store.EnqueueParams{RoomID: roomID, Kind: "room.updated", Payload: []byte(`{}`)})
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	steps := []func(context.Context, string) error{q.RevokeUserInvitations, q.DeleteFriendships, q.DeleteBlocks, q.DeleteMutes, q.DeleteAccountTokens, q.RevokeAllSessions}
+	for _, step := range steps {
+		if err := step(ctx, userID); err != nil {
+			return err
+		}
+	}
+	// No password can match this hash, and the email becomes unusable.
+	return q.AnonymizeUser(ctx, store.AnonymizeUserParams{ID: userID, PasswordHash: "deleted-no-password"})
 }
 
 // transferHostedRooms passes each waiting room the user hosts to its

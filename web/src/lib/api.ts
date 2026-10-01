@@ -4,6 +4,8 @@ export type User = {
   display_name: string;
   email: string;
   email_verified: boolean;
+  // A name-only guest: plays and chats, no email, password or friends.
+  is_guest?: boolean;
 };
 export type Room = {
   id: string;

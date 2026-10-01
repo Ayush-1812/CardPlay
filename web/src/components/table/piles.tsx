@@ -2,6 +2,7 @@
 // top band peeking out; a pill above shows progress or the bank total.
 
 import {
+  cardName,
   Cards,
   COLOR_CSS,
   BAND_TEXT,
@@ -14,18 +15,23 @@ import { CardBack, PlayingCard } from "./playing-card";
 // Vertical offset between stacked cards, relative to card width.
 const overlapFor = (width: number) => Math.round(width * 0.3);
 
+// Pick makes property cards tappable (the player's own board, on their turn).
+type Pick = { onPick: (id: string) => void; label: (id: string) => string };
+
 function Stack({
   ids,
   cards,
   width,
   color,
   maxHeight,
+  pick,
 }: {
   ids: string[];
   cards: Cards;
   width: number;
   color?: PropertySet["color"];
   maxHeight?: number;
+  pick?: Pick;
 }) {
   const cardH = Math.round(width * 1.5);
   let overlap = overlapFor(width);
@@ -48,7 +54,18 @@ function Stack({
             transform: `rotate(${i % 2 ? 0.5 : -0.5}deg)`,
           }}
         >
-          <PlayingCard card={cards[id]} width={width} activeColor={color} />
+          {pick && cards[id] && cards[id].kind !== "action" ? (
+            <button
+              type="button"
+              className="pile-pick"
+              aria-label={pick.label(id)}
+              onClick={() => pick.onPick(id)}
+            >
+              <PlayingCard card={cards[id]} width={width} activeColor={color} />
+            </button>
+          ) : (
+            <PlayingCard card={cards[id]} width={width} activeColor={color} />
+          )}
         </div>
       ))}
     </div>
@@ -59,10 +76,12 @@ export function SetPile({
   set,
   cards,
   width,
+  pick,
 }: {
   set: PropertySet;
   cards: Cards;
   width: number;
+  pick?: Pick;
 }) {
   const ids = [
     ...set.cards,
@@ -93,7 +112,13 @@ export function SetPile({
         {set.complete && <span className="pile-done">✓ SET</span>}
         <span className="pile-rent">{set.rent}M</span>
       </div>
-      <Stack ids={ids} cards={cards} width={width} color={set.color} />
+      <Stack
+        ids={ids}
+        cards={cards}
+        width={width}
+        color={set.color}
+        pick={pick}
+      />
     </div>
   );
 }
@@ -142,11 +167,13 @@ function LoosePile({
   ids,
   cards,
   width,
+  pick,
 }: {
   label: string;
   ids: string[];
   cards: Cards;
   width: number;
+  pick?: Pick;
 }) {
   if (ids.length === 0) return null;
   return (
@@ -154,7 +181,7 @@ function LoosePile({
       <div className="pile-pill">
         <span>{label}</span>
       </div>
-      <Stack ids={ids} cards={cards} width={width} />
+      <Stack ids={ids} cards={cards} width={width} pick={pick} />
     </div>
   );
 }
@@ -164,22 +191,38 @@ export function Board({
   player,
   cards,
   width,
+  onPickProperty,
 }: {
   player: PublicPlayer;
   cards: Cards;
   width: number;
+  // When set, the player's property cards can be tapped (to move them).
+  onPickProperty?: (id: string) => void;
 }) {
+  const pick = onPickProperty
+    ? {
+        onPick: onPickProperty,
+        label: (id: string) => `Move ${cardName(cards, id)}`,
+      }
+    : undefined;
   return (
     <div className="board-row">
       <BankPile ids={player.bank} cards={cards} width={width} />
       {player.sets.map((set) => (
-        <SetPile key={set.id} set={set} cards={cards} width={width} />
+        <SetPile
+          key={set.id}
+          set={set}
+          cards={cards}
+          width={width}
+          pick={pick}
+        />
       ))}
       <LoosePile
         label="UNASSIGNED"
         ids={player.unassigned}
         cards={cards}
         width={width}
+        pick={pick}
       />
       <LoosePile
         label="UNATTACHED"

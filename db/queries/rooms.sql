@@ -66,3 +66,15 @@ UPDATE invitations SET accepted_at=now() WHERE id=$1 AND target_id IS NOT NULL;
 UPDATE invitations SET revoked_at=now() WHERE id=$1 AND inviter_id=$2;
 -- name: RevokeInvitationByHost :execrows
 UPDATE invitations SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL;
+-- name: DeleteRoom :exec
+DELETE FROM rooms WHERE id=$1;
+-- name: MemberCount :one
+SELECT count(*) FROM room_members WHERE room_id=$1;
+-- name: DeleteIdleRooms :many
+-- Rooms nobody has had open for an hour go, with their games (owner decision
+-- 2026-10-01). A room locked by a join or move in progress is skipped.
+DELETE FROM rooms WHERE id IN (
+  SELECT r.id FROM rooms r WHERE r.created_at < now()-interval '1 hour'
+  AND NOT EXISTS (SELECT 1 FROM room_members m WHERE m.room_id=r.id AND m.last_seen_at > now()-interval '1 hour')
+  ORDER BY r.created_at LIMIT 200 FOR UPDATE SKIP LOCKED
+) RETURNING id;

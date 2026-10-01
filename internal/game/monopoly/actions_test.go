@@ -41,6 +41,20 @@ func TestSlyDeal(t *testing.T) {
 				t.Fatal("assets must not move before the response closes")
 			}
 			n = ok(t, n, 1, accept(n))
+			if mustCard(take).Kind == KindProperty {
+				// A single-color card has one home and is placed at once.
+				if n.Phase != PhasePlay || len(n.Players[0].Incoming) != 0 || n.Players[0].openSet(Green) == "" {
+					t.Fatalf("stolen single-color property must be placed: %+v", n.Players[0])
+				}
+				return
+			}
+			if mustCard(take).Kind == KindRainbowWild {
+				// With no set to join, the only home is unassigned.
+				if n.Phase != PhasePlay || !has(n.Players[0].Unassigned, take) {
+					t.Fatalf("stolen multicolor wild should be unassigned: %+v", n.Players[0])
+				}
+				return
+			}
 			if n.Phase != PhasePlacement || !has(n.Players[0].Incoming, take) {
 				t.Fatalf("stolen property must await placement: %+v", n.Players[0])
 			}
@@ -90,21 +104,33 @@ func TestForcedDeal(t *testing.T) {
 			rejected(t, s, 0, PlayForcedDeal{Card: act(ForcedDeal, 1), Target: 1, Take: tc.take, Offer: tc.offer}, tc.code)
 		})
 	}
-	t.Run("swap needs placement by both players", func(t *testing.T) {
+	t.Run("single-color cards are placed at once", func(t *testing.T) {
 		n := ok(t, s, 0, PlayForcedDeal{Card: act(ForcedDeal, 1), Target: 1, Take: orangeCards[0], Offer: redCards[0]})
 		n = ok(t, n, 1, accept(n))
-		if !has(n.Players[0].Incoming, orangeCards[0]) || !has(n.Players[1].Incoming, redCards[0]) || n.Phase != PhasePlacement {
+		if n.Phase != PhasePlay || n.Players[0].openSet(Orange) == "" || n.Players[1].openSet(Red) == "" {
+			t.Fatal("swapped properties were not placed")
+		}
+	})
+	t.Run("swap of wilds needs placement by both players", func(t *testing.T) {
+		a := actor
+		a.Sets = []PropertySet{set("mine-full", DarkBlue, darkBlueCards...), set("mine", Red, wild(Red, Yellow, 1))}
+		v := victim
+		v.Sets = []PropertySet{set("theirs-full", Brown, brownCards...), set("theirs", Orange, wild(Pink, Orange, 1))}
+		n := fixture(t, a, v)
+		n = ok(t, n, 0, PlayForcedDeal{Card: act(ForcedDeal, 1), Target: 1, Take: wild(Pink, Orange, 1), Offer: wild(Red, Yellow, 1)})
+		n = ok(t, n, 1, accept(n))
+		if !has(n.Players[0].Incoming, wild(Pink, Orange, 1)) || !has(n.Players[1].Incoming, wild(Red, Yellow, 1)) || n.Phase != PhasePlacement {
 			t.Fatal("swap did not move both cards to incoming")
 		}
 		if _, found := n.Players[0].setByID("mine"); found {
 			t.Fatal("the emptied set should disappear")
 		}
 		// Off-turn placement of an incoming card is allowed; play waits for both.
-		n = ok(t, n, 1, PlaceReceived{Card: redCards[0]})
+		n = ok(t, n, 1, PlaceReceived{Card: wild(Red, Yellow, 1), Color: Yellow})
 		if n.Phase != PhasePlacement {
 			t.Fatal("play resumed before the actor placed")
 		}
-		n = ok(t, n, 0, PlaceReceived{Card: orangeCards[0]})
+		n = ok(t, n, 0, PlaceReceived{Card: wild(Pink, Orange, 1), Color: Pink})
 		if n.Phase != PhasePlay {
 			t.Fatal("play did not resume")
 		}
@@ -112,7 +138,7 @@ func TestForcedDeal(t *testing.T) {
 	t.Run("taking a detached building", func(t *testing.T) {
 		n := ok(t, s, 0, PlayForcedDeal{Card: act(ForcedDeal, 1), Target: 1, Take: act(House, 1), Offer: redCards[0]})
 		n = ok(t, n, 1, accept(n))
-		if !has(n.Players[0].Detached, act(House, 1)) || !has(n.Players[1].Incoming, redCards[0]) {
+		if !has(n.Players[0].Detached, act(House, 1)) || n.Players[1].openSet(Red) == "" || n.Phase != PhasePlay {
 			t.Fatal("building swap wrong")
 		}
 	})

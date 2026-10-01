@@ -54,7 +54,10 @@
     rgba(0, 0, 0, 0.42) 100%
   );
 }
-.felt > :not(.chat-drawer):not(.dialog-backdrop):not(.table-alerts) {
+.felt
+  > :not(.chat-drawer):not(.dialog-backdrop):not(.table-alerts):not(
+    .sheet-backdrop
+  ):not(.prompt-pill):not(.game-table) {
   position: relative;
   z-index: 1;
 }
@@ -1334,9 +1337,33 @@ button.crest:hover {
 .game-table.compact .table-panel {
   padding: 10px 12px 8px;
 }
+/* Phones: deck, center pile and the log share one slim row. */
+.game-table.compact .pile-rail {
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
+}
+.game-table.compact .pile-rail .panel-caption {
+  display: none;
+}
 .game-table.compact .pile-rail .piles {
   flex-direction: row;
-  justify-content: space-around;
+  justify-content: flex-start;
+  gap: 12px;
+}
+.game-table.compact .pile-block {
+  flex-direction: row;
+  gap: 6px;
+}
+.game-table.compact .pile-block span {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+.game-table.compact .game-log {
+  flex: 1;
+  margin-top: 0;
+  max-height: 120px;
 }
 .game-table.compact .opp-panel .board-scroll {
   justify-content: flex-start;

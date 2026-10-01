@@ -42,6 +42,7 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 	games := game.NewRegistry(monopoly.Module{})
 	match := &matches.Module{DB: pool, Games: games, Random: rand.Reader, TurnTimeout: c.TurnTimeout}
 	hub := realtime.New(pool, rm, ch, match, c.Origin)
+	hub.Hourly = append(hub.Hourly, auth.PurgeIdleGuests)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, obs.Instrument(), obs.Recover)
 	r.Use(func(next http.Handler) http.Handler {
@@ -110,6 +111,9 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 			r.Post("/auth/password/reset", auth.ResetPassword)
 			r.Post("/auth/login", auth.Login)
 		})
+		// Guest sign-in is cheap (no password hashing) but creates accounts,
+		// so it has its own budget.
+		r.With(newScopedLimiter("guest", 60, time.Minute)).Post("/auth/guest", auth.Guest)
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.Require)
 			r.Get("/me", auth.Me)
@@ -122,10 +126,11 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.Verified, newLimiter(120, time.Minute))
-			r.With(newLimiter(30, time.Minute)).Get("/users", friends.Search)
-			r.Get("/friendships", friends.List)
-			r.Get("/blocks", friends.Blocks)
-			r.With(newLimiter(20, time.Minute)).Post("/friendships/{userID}/{action}", friends.Change)
+			// Friends need a signed-in account; guests get 403 GUEST_NOT_ALLOWED.
+			r.With(httpx.FullAccount, newLimiter(30, time.Minute)).Get("/users", friends.Search)
+			r.With(httpx.FullAccount).Get("/friendships", friends.List)
+			r.With(httpx.FullAccount).Get("/blocks", friends.Blocks)
+			r.With(httpx.FullAccount, newLimiter(20, time.Minute)).Post("/friendships/{userID}/{action}", friends.Change)
 			r.Get("/rooms", rm.List)
 			r.With(newLimiter(10, time.Minute)).Post("/rooms", rm.Create)
 			r.With(newLimiter(20, time.Minute)).Post("/rooms/join", rm.Join)

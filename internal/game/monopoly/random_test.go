@@ -126,7 +126,9 @@ func (b bot) propose(s *State, seat int) Action {
 // A24: across many random games every accepted transition keeps all 106
 // cards in legal zones, and every rejection leaves the state unchanged.
 func TestRandomGamesPreserveInvariants(t *testing.T) {
-	games, steps := 300, 1500
+	// Turns end automatically after three plays, so random bots get fewer
+	// free rearranges per turn; 3000 steps still finishes 18 seeded games.
+	games, steps := 300, 3000
 	finished, accepted, rejectedCount := 0, 0, 0
 	kinds := map[string]int{}
 	for g := range games {

@@ -113,6 +113,34 @@ func (q *Queries) CreateAccountToken(ctx context.Context, arg CreateAccountToken
 	return err
 }
 
+const createGuest = `-- name: CreateGuest :one
+INSERT INTO users(email,handle,display_name,password_hash,email_verified,is_guest) VALUES ($1,$2,$3,'guest-no-password',false,true) RETURNING id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at, is_guest, last_active_at
+`
+
+type CreateGuestParams struct {
+	Email       string `json:"email"`
+	Handle      string `json:"handle"`
+	DisplayName string `json:"display_name"`
+}
+
+func (q *Queries) CreateGuest(ctx context.Context, arg CreateGuestParams) (User, error) {
+	row := q.db.QueryRow(ctx, createGuest, arg.Email, arg.Handle, arg.DisplayName)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Handle,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.EmailVerified,
+		&i.CreatedAt,
+		&i.DeletedAt,
+		&i.IsGuest,
+		&i.LastActiveAt,
+	)
+	return i, err
+}
+
 const createLoginDevice = `-- name: CreateLoginDevice :exec
 INSERT INTO login_devices(token_hash,user_id,expires_at) VALUES($1,$2,$3)
 `
@@ -144,7 +172,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users(email,handle,display_name,password_hash,email_verified) VALUES ($1,$2,$3,$4,$5) RETURNING id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at
+INSERT INTO users(email,handle,display_name,password_hash,email_verified) VALUES ($1,$2,$3,$4,$5) RETURNING id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at, is_guest, last_active_at
 `
 
 type CreateUserParams struct {
@@ -173,6 +201,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.EmailVerified,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.IsGuest,
+		&i.LastActiveAt,
 	)
 	return i, err
 }
@@ -243,6 +273,31 @@ DELETE FROM sessions WHERE token_hash=$1
 func (q *Queries) DeleteSession(ctx context.Context, tokenHash string) error {
 	_, err := q.db.Exec(ctx, deleteSession, tokenHash)
 	return err
+}
+
+const idleGuests = `-- name: IdleGuests :many
+SELECT id FROM users WHERE is_guest AND deleted_at IS NULL AND last_active_at < now()-interval '7 days'
+ORDER BY last_active_at LIMIT 200
+`
+
+func (q *Queries) IdleGuests(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, idleGuests)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSessions = `-- name: ListSessions :many
@@ -352,7 +407,7 @@ func (q *Queries) RevokeUserInvitations(ctx context.Context, inviterID string) e
 }
 
 const sessionUser = `-- name: SessionUser :one
-SELECT u.id,u.handle,u.display_name,u.email,u.email_verified,s.expires_at
+SELECT u.id,u.handle,u.display_name,u.email,u.email_verified,u.is_guest,u.last_active_at,s.expires_at
 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.deleted_at IS NULL
 `
 
@@ -362,6 +417,8 @@ type SessionUserRow struct {
 	DisplayName   string    `json:"display_name"`
 	Email         string    `json:"email"`
 	EmailVerified bool      `json:"email_verified"`
+	IsGuest       bool      `json:"is_guest"`
+	LastActiveAt  time.Time `json:"last_active_at"`
 	ExpiresAt     time.Time `json:"expires_at"`
 }
 
@@ -374,13 +431,30 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash string) (SessionUse
 		&i.DisplayName,
 		&i.Email,
 		&i.EmailVerified,
+		&i.IsGuest,
+		&i.LastActiveAt,
 		&i.ExpiresAt,
 	)
 	return i, err
 }
 
+const touchUser = `-- name: TouchUser :exec
+WITH touched AS (
+  UPDATE users u SET last_active_at=now() WHERE u.id=$1 AND u.last_active_at < now()-interval '1 hour' RETURNING u.id AS user_id,u.is_guest
+)
+UPDATE sessions s SET expires_at=greatest(s.expires_at, now()+interval '7 days')
+FROM touched t WHERE s.user_id=t.user_id AND t.is_guest
+`
+
+// Records activity at most hourly. A guest's sessions slide forward, so a
+// guest who keeps playing is never signed out.
+func (q *Queries) TouchUser(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, touchUser, id)
+	return err
+}
+
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at FROM users WHERE email=$1 AND deleted_at IS NULL
+SELECT id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at, is_guest, last_active_at FROM users WHERE email=$1 AND deleted_at IS NULL
 `
 
 func (q *Queries) UserByEmail(ctx context.Context, email string) (User, error) {
@@ -395,12 +469,14 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (User, error) {
 		&i.EmailVerified,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.IsGuest,
+		&i.LastActiveAt,
 	)
 	return i, err
 }
 
 const userByIDForUpdate = `-- name: UserByIDForUpdate :one
-SELECT id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
+SELECT id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at, is_guest, last_active_at FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
 `
 
 func (q *Queries) UserByIDForUpdate(ctx context.Context, id string) (User, error) {
@@ -415,6 +491,8 @@ func (q *Queries) UserByIDForUpdate(ctx context.Context, id string) (User, error
 		&i.EmailVerified,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.IsGuest,
+		&i.LastActiveAt,
 	)
 	return i, err
 }

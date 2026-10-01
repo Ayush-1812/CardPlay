@@ -1,6 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 import { startAPI, stopAPI } from "./api";
-import { createRoom, expectNoLeaks, latestState, makeFriends, newPlayer, registerViaAPI, type Player } from "./helpers";
+import {
+  createRoom,
+  expectNoLeaks,
+  joinInvitation,
+  latestState,
+  makeFriends,
+  newPlayer,
+  registerViaAPI,
+  tapHandCard,
+  type Player,
+} from "./helpers";
 
 type Card = { id: string; kind: string; value: number };
 
@@ -23,31 +33,36 @@ async function newerState(p: Player, revision: number) {
   return latestState(p);
 }
 
-// One turn through the UI, like a careful beginner: lay properties first
-// (default destination), otherwise bank money, then end the turn and return
-// any cards over seven.
+// One turn through the UI, like a careful beginner: lay properties first,
+// otherwise bank money. A card with one sensible home goes down with a tap;
+// a wild card with a choice picks the first (best) destination. The turn ends by itself
+// after three plays; with fewer, or more than seven cards, the player ends
+// it and returns the excess.
 async function takeTurn(p: Player, cards: Record<string, Card>) {
   let st = latestState(p);
-  for (let play = 0; play < 3 && st.view.public.plays_left > 0; play++) {
+  const seat = st.view.self.seat;
+  for (let play = 0; play < 3; play++) {
+    if (st.status !== "playing" || st.view.public.active !== seat || st.view.public.plays_left === 0) break;
     const hand: string[] = st.view.self.hand;
-    let i = hand.findIndex((id) => isProperty(cards[id]));
-    const property = i >= 0;
-    if (!property) i = hand.findIndex((id) => cards[id].kind === "money");
-    if (i < 0) break;
-    const button = p.page.locator(".hand-card").nth(i);
-    await button.focus();
-    await button.press("Enter");
-    const dialog = p.page.locator(".hand-actions");
-    await dialog.getByRole("button", { name: property ? "Play property" : /^Bank as/ }).click();
+    let id = hand.find((c) => isProperty(cards[c]));
+    if (!id) id = hand.find((c) => cards[c].kind === "money");
+    if (!id) break;
+    await tapHandCard(p, id);
+    // A card with one sensible home is played at once; otherwise a sheet asks.
+    const before = st.revision;
+    const sheet = p.page.getByRole("dialog");
+    await expect.poll(async () => latestState(p).revision > before || (await sheet.count()) > 0).toBe(true);
+    if (latestState(p).revision === before) await sheet.locator(".dest-tile").first().click();
     st = await newerState(p, st.revision);
-    if (st.status !== "playing") return st;
   }
-  await p.page.locator(".platter-actions").getByRole("button", { name: "End turn" }).click();
+  if (st.status !== "playing" || st.view.public.active !== seat) return st;
   const hand: string[] = st.view.self.hand;
+  if (st.view.public.plays_left > 0)
+    await p.page.locator(".platter-actions").getByRole("button", { name: "End turn" }).click();
   if (hand.length > 7) {
-    const picker = p.page.locator(".dialog");
-    for (let k = 0; k < hand.length - 7; k++) await picker.locator(".pick:not(.on)").first().click();
-    await picker.getByRole("button", { name: /and end turn$/ }).click();
+    const sheet = p.page.getByRole("dialog", { name: "End turn" });
+    for (let k = 0; k < hand.length - 7; k++) await sheet.locator(".card-choice:not(.on)").first().click();
+    await sheet.getByRole("button", { name: /and end turn$/ }).click();
   }
   return newerState(p, st.revision);
 }
@@ -73,9 +88,8 @@ test.describe.serial("a complete two-player match", () => {
   test("lobby: invite, ready, start", async () => {
     await host.page.reload();
     await createRoom(host, "Head to head", 2);
-    await host.page.locator(".friend-row", { hasText: `@${guest.handle}` }).getByRole("button", { name: "Invite" }).click();
-    await guest.page.reload();
-    await guest.page.locator(".friend-row", { hasText: "Head to head" }).getByRole("button", { name: "Join →" }).click();
+    await host.page.locator(".invite-panel .friend-row", { hasText: `@${guest.handle}` }).getByRole("button", { name: "Invite" }).click();
+    await joinInvitation(guest, "Head to head");
     for (const p of [host, guest]) {
       await p.page.getByRole("button", { name: "I'm ready" }).click();
       await expect(p.page.getByRole("button", { name: "Not ready yet" })).toBeVisible();
@@ -127,7 +141,8 @@ test.describe.serial("a complete two-player match", () => {
     const tab2 = await host.context.newPage();
     tab2.on("dialog", (d) => void d.accept());
     await tab2.goto("/");
-    await tab2.locator("aside").getByRole("button", { name: /Head to head/ }).click();
+    // A new tab starts on the games screen, which offers to rejoin the table.
+    await tab2.locator(".rejoin-row", { hasText: "Head to head" }).click();
     await expect(tab2.locator(".game-table")).toBeVisible();
     await expect(host.page.getByText(/open in another tab/)).toBeVisible();
     await host.page.bringToFront();

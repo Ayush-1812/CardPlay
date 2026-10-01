@@ -1,6 +1,6 @@
 # Platform API and architecture
 
-All endpoints use JSON unless the response is `204`. Base path: `/api/v1`. A successful mutation commits before its HTTP response. Versions are pinned per room/match as `game_id` and `rules_version`. Public room browsing, spectators and guest sessions are absent by design.
+All endpoints use JSON unless the response is `204`. Base path: `/api/v1`. A successful mutation commits before its HTTP response. Versions are pinned per room/match as `game_id` and `rules_version`. Public room browsing and spectators are absent by design. **Guests** are name-only accounts (`is_guest`): they may use rooms, matches and chat like a verified account, but friends, blocks and user search answer `403 GUEST_NOT_ALLOWED`.
 
 ## HTTP endpoints
 
@@ -17,8 +17,9 @@ All endpoints use JSON unless the response is `204`. Base path: `/api/v1`. A suc
 | `POST /api/v1/auth/password/forgot` | `email` | Public | `202`; generic response, sends a single-use one-hour reset token when account exists |
 | `POST /api/v1/auth/password/reset` | `token`, `password` | Public | `200`; consumes token, replaces hash, revokes every session and marks the email verified |
 | `POST /api/v1/auth/login` | `email`, `password` | Public | `200` minimal profile + HttpOnly session cookie and login-device cookie; same error for missing email/wrong password |
-| `POST /api/v1/auth/logout` | none | Signed in | `204`; current session removed |
-| `GET /api/v1/me` | none | Signed in | Own ID, handle, display name, email and verification state; email never appears in room views |
+| `POST /api/v1/auth/guest` | `display_name` (1–24 characters, plain text) | Public, 60/min | `201` guest profile (`is_guest: true`) + HttpOnly session cookie. No email or password; the session slides with use and the guest is deleted after 7 days unused |
+| `POST /api/v1/auth/logout` | none | Signed in | `204`; current session removed. For a guest this also leaves every room and game and deletes the guest, since the cookie was its only key |
+| `GET /api/v1/me` | none | Signed in | Own ID, handle, display name, email (empty for guests), verification state and `is_guest`; email never appears in room views |
 | `PATCH /api/v1/me` | `display_name` | Signed in | `200`; updates own public display name (1–60 characters) |
 | `PUT /api/v1/me/password` | `current_password`, `new_password` | Signed in | `204`; verifies current password, changes it and revokes all sessions |
 | `DELETE /api/v1/me` | `password` | Signed in | `204`; revokes tokens/sessions, passes each hosted waiting room to its longest-present other member (closing rooms nobody else is in), removes waiting memberships, friendships and blocks, anonymizes retained profile |
@@ -32,8 +33,8 @@ All endpoints use JSON unless the response is `204`. Base path: `/api/v1`. A suc
 | `POST /api/v1/rooms` | `name`, `capacity` 2–5 | Verified | `201`; private room, creator seat zero |
 | `GET /api/v1/rooms/{roomID}` | none | Member | Room metadata, member handles/seat/ready state; nonmembers receive `404` |
 | `PATCH /api/v1/rooms/{roomID}` | `name`, `capacity` 2–5 | Host, waiting room | `200`; rejects capacity below occupied seats |
-| `DELETE /api/v1/rooms/{roomID}` | none | Host, waiting room | `204`; closes room, revokes invitations and removes access to room/chat views |
-| `POST /api/v1/rooms/{roomID}/leave` | none | Member, waiting room | `204`; host passes ownership to longest-present member or closes empty room; the leaver's invitations in the room are revoked |
+| `DELETE /api/v1/rooms/{roomID}` | none | Host, waiting room | `204`; members are notified, then the room, its chat, invitations and games are deleted |
+| `POST /api/v1/rooms/{roomID}/leave` | none | Member, waiting room | `204`; host passes ownership to the longest-present member; the leaver's invitations in the room are revoked; the last player out deletes the room with its chat and games. Rooms nobody has had open for 1 hour are deleted too |
 | `PUT /api/v1/rooms/{roomID}/host` | `user_id` of member | Host, waiting room | `204`; explicit host transfer |
 | `DELETE /api/v1/rooms/{roomID}/members/{userID}` | none | Host, waiting room | `204`; removes and bans member from rejoining through old links, revokes invitations to and created by them; resets readiness |
 | `PUT /api/v1/rooms/{roomID}/ready` | `ready` boolean | Member, waiting room | `204`; serialized with room lock |

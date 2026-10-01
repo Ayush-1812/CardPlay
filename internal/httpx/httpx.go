@@ -23,6 +23,9 @@ import (
 type Identity struct {
 	ID, Handle, DisplayName, Email, SessionHash string
 	Verified                                    bool
+	// Guest marks a name-only account (owner decision 2026-10-01): it may
+	// play and chat but has no email, password or friends.
+	Guest bool
 }
 type identityKey struct{}
 
@@ -39,10 +42,25 @@ func Require(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// Verified admits a verified account or a guest: both may use rooms, games
+// and chat. An unverified (registered, not yet confirmed) account may not.
 func Verified(next http.Handler) http.Handler {
 	return Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !Actor(r).Verified {
+		if a := Actor(r); !a.Verified && !a.Guest {
 			Error(w, r, 403, "EMAIL_UNVERIFIED", "Verify your email before using rooms and friends")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+// FullAccount admits only verified, signed-in accounts: friends, blocks and
+// user search are not available to guests.
+func FullAccount(next http.Handler) http.Handler {
+	return Verified(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if Actor(r).Guest {
+			Error(w, r, 403, "GUEST_NOT_ALLOWED", "Sign in with an account to use friends")
 			return
 		}
 		next.ServeHTTP(w, r)

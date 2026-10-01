@@ -15,21 +15,24 @@ import {
 } from "react";
 import {
   actionName,
-  CardInfo,
   cardName,
   Cards,
-  Color,
   COLOR_NAMES,
-  COLORS,
   describeEvent,
   MatchState,
-  PropertySet,
   PublicPlayer,
-  SET_SIZE,
 } from "../lib/game";
+import { CardSheet } from "./table/action-sheet";
 import { Hand } from "./table/hand";
+import { destinationPayload, destinations, placements } from "./table/layout";
 import { Board, CenterPile, DeckPile } from "./table/piles";
 import { PlayingCard } from "./table/playing-card";
+import {
+  DiscardPrompt,
+  FlipSheet,
+  PlacementPrompt,
+  ResponsePrompt,
+} from "./table/prompts";
 
 type Command = (kind: string, payload: object) => Promise<boolean>;
 
@@ -65,48 +68,6 @@ function useWide() {
 
 function initial(name: string) {
   return name.slice(0, 1).toUpperCase() || "?";
-}
-
-// Destinations a property card may go to: an own set of a legal color with
-// room, a new set of a legal color, or unassigned for a multicolor wild. The
-// first option is the default: the own set closest to completion, otherwise
-// a new set (or, for a multicolor wild, unassigned, since a set of only
-// multicolor wilds earns nothing).
-function destinations(card: CardInfo, sets: PropertySet[], ownSetID?: string) {
-  const colors: Color[] =
-    card.kind === "rainbow_wild" ? COLORS : (card.colors ?? []);
-  const options: { value: string; label: string }[] = [];
-  const fits = sets
-    .filter(
-      (set) =>
-        colors.includes(set.color) &&
-        (set.id === ownSetID || set.cards.length < SET_SIZE[set.color]),
-    )
-    .sort(
-      (x, y) =>
-        SET_SIZE[x.color] -
-        x.cards.length -
-        (SET_SIZE[y.color] - y.cards.length),
-    );
-  for (const set of fits)
-    options.push({
-      value: `set:${set.id}`,
-      label: `${COLOR_NAMES[set.color]} set (${set.cards.length}/${SET_SIZE[set.color]})`,
-    });
-  if (card.kind === "rainbow_wild")
-    options.push({ value: "unassigned", label: "Unassigned (no color yet)" });
-  for (const color of colors)
-    options.push({
-      value: `new:${color}`,
-      label: `New ${COLOR_NAMES[color]} set`,
-    });
-  return options;
-}
-
-function destinationPayload(value: string) {
-  if (value.startsWith("set:")) return { set: value.slice(4) };
-  if (value.startsWith("new:")) return { color: value.slice(4) };
-  return {};
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -166,626 +127,6 @@ function Dialog({
   );
 }
 
-// Selectable card thumbnails used for payments and returns.
-function CardPicker({
-  ids,
-  cards,
-  chosen,
-  onToggle,
-  locked = false,
-  order = false,
-}: {
-  ids: string[];
-  cards: Cards;
-  chosen: string[];
-  onToggle: (id: string) => void;
-  locked?: boolean;
-  order?: boolean;
-}) {
-  return (
-    <div className="card-picker">
-      {ids.map((id) => {
-        const on = chosen.includes(id);
-        return (
-          <button
-            key={id}
-            type="button"
-            className={`pick ${on ? "on" : ""}`}
-            aria-pressed={on}
-            aria-label={`${cardName(cards, id)}, ${cards[id]?.value ?? 0}M`}
-            disabled={locked}
-            onClick={() => onToggle(id)}
-          >
-            <PlayingCard card={cards[id]} width={64} selected={on} />
-            {order && on && (
-              <span className="pick-order">{chosen.indexOf(id) + 1}</span>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// CardDialog offers every legal-looking use of one hand card. The server
-// validates; this only builds the typed intent.
-function CardDialog({
-  id,
-  state,
-  cards,
-  mySeat,
-  name,
-  busy,
-  onCommand,
-  onClose,
-}: {
-  id: string;
-  state: MatchState;
-  cards: Cards;
-  mySeat: number;
-  name: (seat: number) => string;
-  busy: boolean;
-  onCommand: Command;
-  onClose: () => void;
-}) {
-  const pub = state.view.public;
-  const me = pub.players[mySeat];
-  const card = cards[id];
-  const opponents = pub.players.filter((p) => p.seat !== mySeat);
-  const [dest, setDest] = useState(() =>
-    card && (card.kind.includes("wild") || card.kind === "property")
-      ? (destinations(card, me.sets)[0]?.value ?? "")
-      : "",
-  );
-  const [target, setTarget] = useState(opponents[0]?.seat ?? 0);
-  const [take, setTake] = useState("");
-  const [offer, setOffer] = useState("");
-  const [setID, setSetID] = useState("");
-  const [doublers, setDoublers] = useState<string[]>([]);
-  if (!card) return null;
-  const targetPlayer = pub.players[target];
-  const stealable = (p: PublicPlayer, buildings: boolean) => [
-    ...p.sets.filter((s) => !s.complete).flatMap((s) => s.cards),
-    ...p.unassigned,
-    ...(buildings ? p.detached : []),
-  ];
-  const bank =
-    card.kind !== "property" &&
-    card.kind !== "wild" &&
-    card.kind !== "rainbow_wild";
-  const run = async (kind: string, payload: object) => {
-    if (await onCommand(kind, payload)) onClose();
-  };
-  const targetSelect = (
-    <Field label="Player">
-      <select
-        value={target}
-        onChange={(e) => setTarget(Number(e.target.value))}
-      >
-        {opponents.map((p) => (
-          <option key={p.seat} value={p.seat}>
-            {name(p.seat)}
-          </option>
-        ))}
-      </select>
-    </Field>
-  );
-  const cardSelect = (
-    label: string,
-    value: string,
-    set: (v: string) => void,
-    ids: string[],
-  ) => (
-    <Field label={label}>
-      <select value={value} onChange={(e) => set(e.target.value)}>
-        <option value="">Choose…</option>
-        {ids.map((c) => (
-          <option key={c} value={c}>
-            {cardName(cards, c)} ({cards[c]?.value ?? 0}M)
-          </option>
-        ))}
-      </select>
-    </Field>
-  );
-  let play: ReactNode = null;
-  if (
-    card.kind === "property" ||
-    card.kind === "wild" ||
-    card.kind === "rainbow_wild"
-  ) {
-    play = (
-      <>
-        <Field label="Place in">
-          <select value={dest} onChange={(e) => setDest(e.target.value)}>
-            {destinations(card, me.sets).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <button
-          className="btn-gold"
-          disabled={busy}
-          onClick={() =>
-            void run("play_property", { card: id, ...destinationPayload(dest) })
-          }
-        >
-          Play property
-        </button>
-      </>
-    );
-  } else if (card.kind === "rent" || card.kind === "rent_any") {
-    const eligible = me.sets.filter(
-      (s) =>
-        s.rent > 0 &&
-        (card.kind === "rent_any" || card.colors!.includes(s.color)),
-    );
-    const myDoublers = state.view.self.hand.filter(
-      (c) => cards[c]?.action === "double_the_rent",
-    );
-    play =
-      eligible.length === 0 ? (
-        <p className="muted">You have no matching set to charge rent on.</p>
-      ) : (
-        <>
-          <Field label="Charge rent on">
-            <select value={setID} onChange={(e) => setSetID(e.target.value)}>
-              <option value="">Choose a set…</option>
-              {eligible.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {COLOR_NAMES[s.color]} ({s.cards.length} cards, {s.rent}M)
-                </option>
-              ))}
-            </select>
-          </Field>
-          {card.kind === "rent_any" && targetSelect}
-          {card.kind === "rent" &&
-            myDoublers.map((d, i) => (
-              <label key={d} className="check">
-                <input
-                  type="checkbox"
-                  checked={doublers.includes(d)}
-                  disabled={
-                    !doublers.includes(d) &&
-                    pub.plays_left < 2 + doublers.length
-                  }
-                  onChange={(e) =>
-                    setDoublers(
-                      e.target.checked
-                        ? [...doublers, d]
-                        : doublers.filter((x) => x !== d),
-                    )
-                  }
-                />
-                Add Double the Rent {i + 1} (uses a play)
-              </label>
-            ))}
-          <button
-            className="btn-gold"
-            disabled={busy || !setID}
-            onClick={() =>
-              void run("rent", {
-                card: id,
-                set: setID,
-                ...(doublers.length ? { doublers } : {}),
-                ...(card.kind === "rent_any" ? { target } : {}),
-              })
-            }
-          >
-            Charge rent{card.kind === "rent" ? " to everyone" : ""}
-          </button>
-        </>
-      );
-  } else if (card.kind === "action") {
-    switch (card.action) {
-      case "pass_go":
-        play = (
-          <button
-            className="btn-gold"
-            disabled={busy}
-            onClick={() => void run("pass_go", { card: id })}
-          >
-            Play Pass Go (draw 2)
-          </button>
-        );
-        break;
-      case "birthday":
-        play = (
-          <button
-            className="btn-gold"
-            disabled={busy}
-            onClick={() => void run("birthday", { card: id })}
-          >
-            Everyone pays you 2M
-          </button>
-        );
-        break;
-      case "debt_collector":
-        play = (
-          <>
-            {targetSelect}
-            <button
-              className="btn-gold"
-              disabled={busy}
-              onClick={() => void run("debt_collector", { card: id, target })}
-            >
-              Collect 5M
-            </button>
-          </>
-        );
-        break;
-      case "sly_deal":
-        play = (
-          <>
-            {targetSelect}
-            {cardSelect("Take", take, setTake, stealable(targetPlayer, true))}
-            <button
-              className="btn-gold"
-              disabled={busy || !take}
-              onClick={() => void run("sly_deal", { card: id, target, take })}
-            >
-              Steal
-            </button>
-          </>
-        );
-        break;
-      case "forced_deal":
-        play = (
-          <>
-            {targetSelect}
-            {cardSelect("Take", take, setTake, stealable(targetPlayer, true))}
-            {cardSelect("Give", offer, setOffer, stealable(me, false))}
-            <button
-              className="btn-gold"
-              disabled={busy || !take || !offer}
-              onClick={() =>
-                void run("forced_deal", { card: id, target, take, offer })
-              }
-            >
-              Swap
-            </button>
-          </>
-        );
-        break;
-      case "deal_breaker":
-        play = (
-          <>
-            {targetSelect}
-            <Field label="Complete set">
-              <select value={setID} onChange={(e) => setSetID(e.target.value)}>
-                <option value="">Choose…</option>
-                {targetPlayer.sets
-                  .filter((s) => s.complete)
-                  .map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {COLOR_NAMES[s.color]}
-                      {s.house ? " + House" : ""}
-                      {s.hotel ? " + Hotel" : ""}
-                    </option>
-                  ))}
-              </select>
-            </Field>
-            <button
-              className="btn-gold"
-              disabled={busy || !setID}
-              onClick={() =>
-                void run("deal_breaker", { card: id, target, set: setID })
-              }
-            >
-              Take the set
-            </button>
-          </>
-        );
-        break;
-      case "house":
-      case "hotel": {
-        const eligible = me.sets.filter(
-          (s) =>
-            s.complete &&
-            s.color !== "railroad" &&
-            s.color !== "utility" &&
-            (card.action === "house" ? !s.house : !!s.house && !s.hotel),
-        );
-        play =
-          eligible.length === 0 ? (
-            <p className="muted">
-              {card.action === "house"
-                ? "A House needs a complete set (not railroads or utilities)."
-                : "A Hotel needs a complete set with a House."}
-            </p>
-          ) : (
-            <>
-              <Field label="Build on">
-                <select
-                  value={setID}
-                  onChange={(e) => setSetID(e.target.value)}
-                >
-                  <option value="">Choose…</option>
-                  {eligible.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {COLOR_NAMES[s.color]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <button
-                className="btn-gold"
-                disabled={busy || !setID}
-                onClick={() =>
-                  void run("play_building", { card: id, set: setID })
-                }
-              >
-                Build {card.name}
-              </button>
-            </>
-          );
-        break;
-      }
-      case "just_say_no":
-        play = (
-          <p className="muted">
-            Just Say No is played when an action targets you.
-          </p>
-        );
-        break;
-      case "double_the_rent":
-        play = (
-          <p className="muted">
-            Double the Rent is added when you play a two-color Rent card.
-          </p>
-        );
-        break;
-    }
-  }
-  return (
-    <Dialog label={`Use ${cardName(cards, id)}`} onClose={onClose}>
-      <div className="card-dialog hand-actions">
-        <div className="card-dialog-preview">
-          <PlayingCard card={card} width={150} />
-        </div>
-        <div className="card-dialog-body">
-          <strong>{cardName(cards, id)}</strong>
-          <p className="muted">
-            {pub.plays_left} play{pub.plays_left === 1 ? "" : "s"} left this
-            turn
-          </p>
-          <div className="card-dialog-actions">
-            {play}
-            {bank && (
-              <button
-                className="btn-ghost"
-                disabled={busy}
-                onClick={() => void run("bank", { card: id })}
-              >
-                Bank as {card.value}M
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </Dialog>
-  );
-}
-
-function ResponsePanel({
-  state,
-  cards,
-  mySeat,
-  name,
-  busy,
-  onCommand,
-}: {
-  state: MatchState;
-  cards: Cards;
-  mySeat: number;
-  name: (s: number) => string;
-  busy: boolean;
-  onCommand: Command;
-}) {
-  const p = state.view.public.pending!;
-  const t = p.targets[p.current];
-  const jsns = state.view.self.hand.filter(
-    (c) => cards[c]?.action === "just_say_no",
-  );
-  const starting = t.stage === "respond";
-  const active = t.components.filter((c) => c.state === "active");
-  const [component, setComponent] = useState(active[0]?.key ?? "charge");
-  const base = { pending: p.id, step: p.step };
-  const describe = (key: string) =>
-    key === "charge" ? "the whole charge" : "one Double the Rent";
-  const prompt = starting
-    ? `${name(p.source)} played ${actionName(p.action)} on you. Accept, or play Just Say No.`
-    : mySeat === p.source
-      ? `${name(t.seat)} said Just Say No to ${describe(t.chain!.component)}. Let it stand, or counter with your own.`
-      : `${name(p.source)} countered your Just Say No. Accept, or counter again.`;
-  return (
-    <div className="decision" role="region" aria-label="Your response">
-      <div className="decision-head">
-        <PlayingCard card={cards[p.card]} width={56} />
-        <p>{prompt}</p>
-      </div>
-      <div className="decision-row">
-        <button
-          className="btn-gold"
-          disabled={busy}
-          onClick={() => void onCommand("accept", base)}
-        >
-          {starting ? "Accept" : "Let it stand"}
-        </button>
-        {jsns.length > 0 && (
-          <>
-            {starting && active.length > 1 && (
-              <Field label="Say no to">
-                <select
-                  value={component}
-                  onChange={(e) => setComponent(e.target.value)}
-                >
-                  {active.map((c) => (
-                    <option key={c.key} value={c.key}>
-                      {c.key === "charge"
-                        ? "The whole charge"
-                        : `Double the Rent #${(p.doublers ?? []).indexOf(c.key) + 1} (halves the charge)`}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
-            <button
-              className="btn-danger"
-              disabled={busy}
-              onClick={() =>
-                void onCommand("just_say_no", {
-                  ...base,
-                  card: jsns[0],
-                  ...(starting ? { component } : {}),
-                })
-              }
-            >
-              Just Say No!
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function PaymentPanel({
-  state,
-  cards,
-  mySeat,
-  busy,
-  onCommand,
-}: {
-  state: MatchState;
-  cards: Cards;
-  mySeat: number;
-  busy: boolean;
-  onCommand: Command;
-}) {
-  const p = state.view.public.pending!;
-  const t = p.targets[p.current];
-  const owed = t.owed ?? 0;
-  const me = state.view.public.players[mySeat];
-  const eligible = [
-    ...me.bank,
-    ...me.sets.flatMap((s) => [
-      ...s.cards.filter((c) => cards[c]?.kind !== "rainbow_wild"),
-      ...(s.house ? [s.house] : []),
-      ...(s.hotel ? [s.hotel] : []),
-    ]),
-    ...me.detached,
-  ];
-  const total = eligible.reduce((n, c) => n + (cards[c]?.value ?? 0), 0);
-  const short = total < owed;
-  const [chosen, setChosen] = useState<string[]>(() => (short ? eligible : []));
-  const paid = chosen.reduce((n, c) => n + (cards[c]?.value ?? 0), 0);
-  const breaks = me.sets.filter(
-    (s) => s.complete && s.cards.some((c) => chosen.includes(c)),
-  );
-  return (
-    <div className="decision" role="region" aria-label="Payment">
-      <p>
-        You owe <strong className="gold">{owed}M</strong>. Choose cards from
-        your bank or properties; no change is given.
-        {short &&
-          " Your table is worth less than the debt, so you give everything with value."}
-      </p>
-      {eligible.length === 0 && (
-        <p className="muted">You have nothing on the table to pay with.</p>
-      )}
-      <CardPicker
-        ids={eligible}
-        cards={cards}
-        chosen={chosen}
-        locked={short}
-        onToggle={(c) =>
-          setChosen(
-            chosen.includes(c) ? chosen.filter((x) => x !== c) : [...chosen, c],
-          )
-        }
-      />
-      <div className="decision-row">
-        <span aria-live="polite" className="pay-total">
-          Selected {paid}M of {owed}M
-          {paid > owed ? ` (overpaying ${paid - owed}M)` : ""}
-          {breaks.length > 0
-            ? ` · breaks your ${breaks.map((s) => COLOR_NAMES[s.color]).join(", ")} set`
-            : ""}
-        </span>
-        <button
-          className="btn-gold"
-          disabled={busy || (!short && paid < owed)}
-          onClick={() =>
-            void onCommand("pay", {
-              pending: p.id,
-              step: p.step,
-              cards: chosen,
-            })
-          }
-        >
-          Pay {paid}M
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function PlacementPanel({
-  state,
-  cards,
-  mySeat,
-  busy,
-  onCommand,
-}: {
-  state: MatchState;
-  cards: Cards;
-  mySeat: number;
-  busy: boolean;
-  onCommand: Command;
-}) {
-  const me = state.view.public.players[mySeat];
-  const id = me.incoming[0];
-  const card = cards[id];
-  const options = card ? destinations(card, me.sets) : [];
-  const [dest, setDest] = useState(options[0]?.value ?? "");
-  if (!card) return null;
-  return (
-    <div className="decision" role="region" aria-label="Place a received card">
-      <div className="decision-head">
-        <PlayingCard card={card} width={64} />
-        <p>You received {cardName(cards, id)}. Where should it go?</p>
-      </div>
-      <div className="decision-row">
-        <Field label="Place in">
-          <select value={dest} onChange={(e) => setDest(e.target.value)}>
-            {options.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <button
-          className="btn-gold"
-          disabled={busy}
-          onClick={() =>
-            void onCommand("place_received", {
-              card: id,
-              ...destinationPayload(dest),
-            })
-          }
-        >
-          Place card
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Reorganize: choose a destination for every tabled card, then submit the
-// whole layout at once (it costs no play).
 function ReorganizeDialog({
   state,
   cards,
@@ -889,7 +230,9 @@ function ReorganizeDialog({
               >
                 {destinations(
                   cards[c],
+                  c,
                   me.sets,
+                  cards,
                   where[c].startsWith("set:") ? where[c].slice(4) : undefined,
                 ).map((o) => (
                   <option key={o.value} value={o.value}>
@@ -934,62 +277,6 @@ function ReorganizeDialog({
         <button className="btn-ghost" onClick={onClose}>
           Cancel
         </button>
-      </div>
-    </Dialog>
-  );
-}
-
-function ReturnDialog({
-  state,
-  cards,
-  busy,
-  onCommand,
-  onClose,
-}: {
-  state: MatchState;
-  cards: Cards;
-  busy: boolean;
-  onCommand: Command;
-  onClose: () => void;
-}) {
-  const hand = state.view.self.hand;
-  const excess = Math.max(0, hand.length - 7);
-  const [chosen, setChosen] = useState<string[]>([]);
-  return (
-    <Dialog label="End turn" onClose={onClose} wide>
-      <div className="decision">
-        <p>
-          You have {hand.length} cards. Choose {excess} to put on the bottom of
-          the draw pile (the first chosen is drawn first).
-        </p>
-        <CardPicker
-          ids={hand}
-          cards={cards}
-          chosen={chosen}
-          order
-          onToggle={(c) =>
-            setChosen(
-              chosen.includes(c)
-                ? chosen.filter((x) => x !== c)
-                : chosen.length < excess
-                  ? [...chosen, c]
-                  : chosen,
-            )
-          }
-        />
-        <div className="decision-row">
-          <button
-            className="btn-gold"
-            disabled={busy || chosen.length !== excess}
-            onClick={() =>
-              void onCommand("end_turn", { return: chosen }).then(
-                (ok) => ok && onClose(),
-              )
-            }
-          >
-            Return {excess} and end turn
-          </button>
-        </div>
       </div>
     </Dialog>
   );
@@ -1149,10 +436,13 @@ export function GameTable({
   const mySeat = state.view.self.seat;
   const [selected, setSelected] = useState<string | null>(null);
   const [reorganizing, setReorganizing] = useState(false);
-  const [returning, setReturning] = useState(false);
+  // The turn number on which the player asked to end with too many cards;
+  // tied to the turn so the discard sheet can never reappear on a later one.
+  const [returningTurn, setReturningTurn] = useState<number | null>(null);
   const [pinnedOpp, setPinnedOpp] = useState<number | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
-  const [promptHidden, setPromptHidden] = useState(false);
+  // A property on the player's own table being moved (flipped).
+  const [flipping, setFlipping] = useState<string | null>(null);
   // One-second tick for the turn clock.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -1204,10 +494,15 @@ export function GameTable({
     .slice(-12)
     .reverse();
 
+  // Decisions the game needs from this player open as large sheets.
   let prompt: ReactNode = null;
-  if (playing && waiting && pub.phase === "response")
+  if (
+    playing &&
+    waiting &&
+    (pub.phase === "response" || pub.phase === "payment")
+  )
     prompt = (
-      <ResponsePanel
+      <ResponsePrompt
         key={`r${stateKey}`}
         state={state}
         cards={cards}
@@ -1217,20 +512,14 @@ export function GameTable({
         onCommand={onCommand}
       />
     );
-  if (playing && waiting && pub.phase === "payment")
+  if (
+    playing &&
+    waiting &&
+    pub.phase === "placement" &&
+    myPlayer.incoming.length > 0
+  )
     prompt = (
-      <PaymentPanel
-        key={`p${stateKey}`}
-        state={state}
-        cards={cards}
-        mySeat={mySeat}
-        busy={busy}
-        onCommand={onCommand}
-      />
-    );
-  if (playing && waiting && pub.phase === "placement")
-    prompt = (
-      <PlacementPanel
+      <PlacementPrompt
         key={`pl${stateKey}`}
         state={state}
         cards={cards}
@@ -1239,6 +528,11 @@ export function GameTable({
         onCommand={onCommand}
       />
     );
+  // Three plays spent with more than seven cards: the turn waits for the
+  // discard choice (otherwise the server ends it automatically).
+  const mustDiscard = myTurn && pub.plays_left === 0 && hand.length > 7;
+  const discarding =
+    mustDiscard || (returningTurn === pub.turn && myTurn && hand.length > 7);
   const vote =
     state.status === "paused" ? (
       <div className="decision vote">
@@ -1282,12 +576,39 @@ export function GameTable({
       selected={selectedCard}
       disabled={!myTurn || pub.plays_left === 0 || offline}
       layout={wide ? "fan" : "rail"}
-      onSelect={(id) => setSelected(selectedCard === id ? null : id)}
+      onSelect={pickCard}
     />
   );
 
+  // Tapping a card, as in the reference game: money goes straight to the
+  // bank and a property with only one sensible home straight there; a sheet
+  // opens only when there is a real choice.
+  function pickCard(id: string) {
+    const card = cards[id];
+    if (!card || busy) return;
+    if (card.kind === "money") {
+      void onCommand("bank", { card: id });
+      return;
+    }
+    if (
+      card.kind === "property" ||
+      card.kind === "wild" ||
+      card.kind === "rainbow_wild"
+    ) {
+      const options = placements(card, id, myPlayer.sets, cards);
+      if (options.length === 1) {
+        void onCommand("play_property", {
+          card: id,
+          ...destinationPayload(options[0].value),
+        });
+        return;
+      }
+    }
+    setSelected(id);
+  }
+
   const endTurn = () => {
-    if (hand.length > 7) setReturning(true);
+    if (hand.length > 7) setReturningTurn(pub.turn);
     else void onCommand("end_turn", {});
   };
   // Turn clock: when it runs out the server makes the default move for
@@ -1491,22 +812,7 @@ export function GameTable({
         </aside>
       </div>
 
-      {(prompt || vote) && (
-        <div className={`prompt-dock ${promptHidden ? "hidden" : ""}`}>
-          <button
-            className="prompt-toggle"
-            onClick={() => setPromptHidden(!promptHidden)}
-          >
-            {promptHidden ? "Show decision ▲" : "Look at the table ▼"}
-          </button>
-          {!promptHidden && (
-            <>
-              {prompt}
-              {vote}
-            </>
-          )}
-        </div>
-      )}
+      {vote && <div className="prompt-dock">{vote}</div>}
 
       <section className="platter" aria-label="Your area">
         <div className="platter-head">
@@ -1522,7 +828,12 @@ export function GameTable({
         </div>
         <div className="platter-grid">
           <div className="board-scroll my-board">
-            <Board player={myPlayer} cards={cards} width={tableWidth} />
+            <Board
+              player={myPlayer}
+              cards={cards}
+              width={tableWidth}
+              onPickProperty={myTurn && !busy ? setFlipping : undefined}
+            />
           </div>
           {wide && <div className="hand-area my-hand">{handNode}</div>}
         </div>
@@ -1538,8 +849,9 @@ export function GameTable({
         </div>
       )}
 
-      {selectedCard && (
-        <CardDialog
+      {prompt}
+      {selectedCard && !prompt && !discarding && (
+        <CardSheet
           key={`${selectedCard}:${stateKey}`}
           id={selectedCard}
           state={state}
@@ -1562,14 +874,26 @@ export function GameTable({
           onClose={() => setReorganizing(false)}
         />
       )}
-      {returning && myTurn && (
-        <ReturnDialog
+      {discarding && (
+        <DiscardPrompt
           key={`e${stateKey}`}
           state={state}
           cards={cards}
           busy={busy}
           onCommand={onCommand}
-          onClose={() => setReturning(false)}
+          onClose={mustDiscard ? undefined : () => setReturningTurn(null)}
+        />
+      )}
+      {flipping && myTurn && !prompt && (
+        <FlipSheet
+          key={`f${flipping}:${stateKey}`}
+          id={flipping}
+          state={state}
+          cards={cards}
+          mySeat={mySeat}
+          busy={busy}
+          onCommand={onCommand}
+          onClose={() => setFlipping(null)}
         />
       )}
 

@@ -138,7 +138,7 @@ Properties and property wildcards cannot be banked. Money cannot be played as pr
 | Hotel | Choose full eligible set already containing House and no Hotel | Attach, +4M in addition to House; one play | B1 House/Hotel and pictured Hotel |
 | Just Say No | From hand, in response to an action against that player, including opposing JSN | Discard and toggle targeted effect; Free response; Q1/Q2 refine scope and counter component | B1 Just Say No; G3 |
 | Rearrange | Own turn, no unresolved action; choose specific cards and legal destination(s) | Move existing property cards; not a new hand-card play; building cases Q3 | B1 turn 2B / Wildcards; G2 |
-| End turn / excess selection | Own turn, no response, payment or placement pending | Return excess to draw bottom and advance | B1 End Your Turn |
+| End turn / excess selection | Own turn, no response, payment or placement pending | Return excess to draw bottom and advance; happens automatically after the third play when no excess must be returned (decision 1 Oct 2026) | B1 End Your Turn |
 
 **D invalid input:** incomplete selection is a local preview. On submit, invalid target, insufficient plays, wrong actor, duplicate ID, stale revision or illegal zone causes atomic rejection with no card/play consumed. This intentionally avoids G4's optional mistaken-Deal-Breaker penalty; G4 explicitly asks online implementations to define it. Successful submissions are final. No free trade, gifting, selling, buying from bank, voluntary debt or property-to-money conversion exists.
 
@@ -184,6 +184,17 @@ The product owner adopted every proposal below and decided two follow-ups raised
 - **Q1b** On group charges a Just Say No protects only its defender, and only the source and that defender take part in a chain.
 - **Q2** Double the Rent works only with two-color Rent. A defender's Just Say No targets the whole charge or one doubler; counters restore that part. **Q2-F1** the defender may keep starting chains against other still-active parts until they accept.
 - **Q3** adopted in full (items 1–5 of the proposal below).
+
+### Decisions (1 October 2026)
+
+- **Auto end turn.** Once all three plays are spent and nothing is pending or waiting to be placed, the turn ends by itself when the hand has seven cards or fewer. With more, the player still chooses which cards go back to the deck. This matches the reference game. A player who wants to rearrange must do so before the third play.
+- **Pay accepts.** A player charged by Rent, Debt Collector or It's My Birthday may pay without first pressing Accept. Paying accepts the charge and pays in one move; the outcome is identical to accepting and then paying. Just Say No remains available until they pay.
+- **Only relevant choices.** Nobody is asked a question with one sensible answer.
+  - A property played or received without a chosen set joins the fullest incomplete set of its color. A new set starts only when there is none, or every set of that color is full. No "new set" is offered while a set of that color has room.
+  - A received one-color property is placed automatically, and so is a received multicolor wild when the receiver has no set with room (it stays unassigned). A two-color wild always asks which color. A multicolor wild with somewhere to go asks too.
+  - Rent charges directly when only one set matches; with Double the Rent in hand the player still decides whether to add it.
+  - Sly Deal, Forced Deal and Deal Breaker go straight to the response when there is exactly one possible card or set.
+- **Turn timeout** (30 September): see [09-multiplayer-and-recovery.md](09-multiplayer-and-recovery.md).
 
 ## Material questions (historical record; now decided)
 

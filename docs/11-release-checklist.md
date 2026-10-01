@@ -14,7 +14,7 @@ Work through this list for every release. **Status** records the 2026-09-30 rele
 | sqlc generated code drift | `sqlc diff` (v1.31.1) | ✅ clean |
 | Web formatting, types, lint | `npm run format:check && npm run typecheck && npm run lint` | ✅ |
 | Web production build | `npm run build` | ✅ (built from an identical copy of `web/`) |
-| Browser end-to-end (Playwright, Edge) | `cd scripts/e2e && npx playwright test` | ✅ 28/28 on the final run (1.6 min); the 26 tests before the last two were added passed twice in a row. Includes the action-card spec (Birthday, Debt Collector with Just Say No, Sly Deal, Forced Deal, Deal Breaker, Rent paid in properties, placement, Reorganize) and a real server-side turn timeout |
+| Browser end-to-end (Playwright, Edge) | `cd scripts/e2e && npx playwright test` | ✅ 31/31 on 2026-10-01 after the new flow (guests, games list, temporary rooms, reference-style sheets, auto end turn, only-relevant choices). Includes the action-card spec (Birthday, Debt Collector with Just Say No, Sly Deal, Forced Deal, Deal Breaker, Rent paid in properties, placement, Reorganize) and a real server-side turn timeout |
 | Load test | `go run ./scripts/loadtest …` | ✅ 400 sockets / 197 commands/s with 0 errors; see capacity in the ops doc |
 | Backup/restore drill | `scripts/ops/backup.sh`, `restore.sh` | ✅ Backup under live load, restore, exact comparison, refusals, API ready on the restored database |
 
@@ -22,13 +22,13 @@ Work through this list for every release. **Status** records the 2026-09-30 rele
 
 | Area | Result |
 |---|---|
-| Authentication | Argon2id (64 MiB, t=2); constant-work login for unknown emails; generic errors; email verification required for social and game features; per-email/token and per-known-device rate limits; hashing concurrency capped (new). |
+| Authentication | Argon2id (64 MiB, t=2); constant-work login for unknown emails; generic errors; email verification required for accounts; name-only guests (7-day sliding sessions, no friends, deleted on sign-out or after 7 days unused) for play; per-email/token and per-known-device rate limits; hashing concurrency capped (new). |
 | Sessions | Random 256-bit tokens, only hashes stored; HttpOnly, SameSite=Lax, Secure on HTTPS; 7-day TTL; list and revoke sessions; password change and reset revoke every session; WebSockets recheck the session on every message and every 20 s. |
 | CSRF | Every non-GET API request must carry the exact `APP_ORIGIN` `Origin`; SameSite=Lax cookies; JSON-only bodies with unknown fields rejected. |
-| WebSocket | Exact Origin match, cookie auth + verified account, 16 KB frames, 30 messages / 10 s, 5 sockets per user, per-seat controller generation (a second tab takes over), close codes 4001/4004/4009. |
+| WebSocket | Exact Origin match, cookie auth + verified account or guest, 16 KB frames, 30 messages / 10 s, 5 sockets per user, per-seat controller generation (a second tab takes over), close codes 4001/4004/4009. |
 | Authorization | Room, chat, invitation and match endpoints check membership or participation in the same transaction; non-members get 404, not 403, so nothing is revealed; host-only controls. Covered by integration tests. |
 | Input validation | Size-limited JSON bodies. Display names (60), room names (80), chat (500) and report reasons (500) must be valid UTF-8 with no control characters or bidi overrides (**new**; this was a spoofing gap). Handles `[a-z0-9_]{3,24}`. |
-| Chat abuse | 5 messages per account-wide window; idempotent client IDs; report (one per reporter per message); per-user mute; blocks; plain-text rendering; 90-day retention. |
+| Chat abuse | 5 messages per account-wide window; idempotent client IDs; report (one per reporter per message); per-user mute; blocks; plain-text rendering; chat is deleted with its room. |
 | Hidden game data | Each player receives only their own projection. Rule-rejection messages don't reveal hidden cards. Engine invariant failures now return a generic error, where the text could previously include card IDs (**fixed**). The Playwright suite checks every match state a player received against the stored snapshot of that revision, and fails if it contains a card that was hidden in another player's hand (exact, no false alarms from reshuffled cards). |
 | Secrets | None tracked in git or history. Production config refuses HTTP origins, non-`verify-full` DB TLS and missing SMTP auth. `seed` and `migrate-down` are disabled in production. Logs never contain tokens, cookies or raw URLs. |
 | Headers | API: `CSP default-src 'none'`, `frame-ancestors 'none'`, `X-Frame-Options DENY`, `nosniff`, `no-referrer`, `no-store`. Web: CSP (self only; `unsafe-inline` scripts required by Next.js hydration), DENY framing, `nosniff`, `no-referrer`, Permissions-Policy, COOP; HSTS opt-in with `ENABLE_HSTS=1`; no `X-Powered-By` (**new**). |

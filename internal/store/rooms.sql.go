@@ -151,6 +151,45 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 	return i, err
 }
 
+const deleteIdleRooms = `-- name: DeleteIdleRooms :many
+DELETE FROM rooms WHERE id IN (
+  SELECT r.id FROM rooms r WHERE r.created_at < now()-interval '1 hour'
+  AND NOT EXISTS (SELECT 1 FROM room_members m WHERE m.room_id=r.id AND m.last_seen_at > now()-interval '1 hour')
+  ORDER BY r.created_at LIMIT 200 FOR UPDATE SKIP LOCKED
+) RETURNING id
+`
+
+// Rooms nobody has had open for an hour go, with their games (owner decision
+// 2026-10-01). A room locked by a join or move in progress is skipped.
+func (q *Queries) DeleteIdleRooms(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, deleteIdleRooms)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deleteRoom = `-- name: DeleteRoom :exec
+DELETE FROM rooms WHERE id=$1
+`
+
+func (q *Queries) DeleteRoom(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deleteRoom, id)
+	return err
+}
+
 const hostStillAbsent = `-- name: HostStillAbsent :one
 SELECT EXISTS(SELECT 1 FROM room_members WHERE room_id=$1 AND user_id=$2 AND last_seen_at<now()-interval '60 seconds')
 `
@@ -275,6 +314,17 @@ func (q *Queries) MarkRoomSeen(ctx context.Context, arg MarkRoomSeenParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const memberCount = `-- name: MemberCount :one
+SELECT count(*) FROM room_members WHERE room_id=$1
+`
+
+func (q *Queries) MemberCount(ctx context.Context, roomID string) (int64, error) {
+	row := q.db.QueryRow(ctx, memberCount, roomID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const members = `-- name: Members :many

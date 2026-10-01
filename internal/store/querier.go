@@ -37,6 +37,7 @@ type Querier interface {
 	ControllerHeartbeat(ctx context.Context, arg ControllerHeartbeatParams) (int64, error)
 	ControllerReturned(ctx context.Context, arg ControllerReturnedParams) (int64, error)
 	CreateAccountToken(ctx context.Context, arg CreateAccountTokenParams) error
+	CreateGuest(ctx context.Context, arg CreateGuestParams) (User, error)
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error)
 	CreateLoginDevice(ctx context.Context, arg CreateLoginDeviceParams) error
 	CreateMatch(ctx context.Context, arg CreateMatchParams) (Match, error)
@@ -49,8 +50,12 @@ type Querier interface {
 	DeleteExpiredLoginDevices(ctx context.Context) error
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteFriendships(ctx context.Context, requesterID string) error
+	// Rooms nobody has had open for an hour go, with their games (owner decision
+	// 2026-10-01). A room locked by a join or move in progress is skipped.
+	DeleteIdleRooms(ctx context.Context) ([]string, error)
 	DeleteMutes(ctx context.Context, userID string) error
 	DeletePurposeTokens(ctx context.Context, arg DeletePurposeTokensParams) error
+	DeleteRoom(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, tokenHash string) error
 	EndMatch(ctx context.Context, arg EndMatchParams) error
 	Enqueue(ctx context.Context, arg EnqueueParams) error
@@ -59,6 +64,7 @@ type Querier interface {
 	FindCommand(ctx context.Context, arg FindCommandParams) (GameCommand, error)
 	HasBlock(ctx context.Context, arg HasBlockParams) (bool, error)
 	HostStillAbsent(ctx context.Context, arg HostStillAbsentParams) (bool, error)
+	IdleGuests(ctx context.Context) ([]string, error)
 	IdleMatches(ctx context.Context, timeoutSeconds float64) ([]string, error)
 	InsertChat(ctx context.Context, arg InsertChatParams) (RoomChat, error)
 	InsertCommand(ctx context.Context, arg InsertCommandParams) error
@@ -86,6 +92,7 @@ type Querier interface {
 	// Everything one viewer's projection needs, read in one statement (one
 	// consistent snapshot, one round trip).
 	MatchStateFor(ctx context.Context, arg MatchStateForParams) (MatchStateForRow, error)
+	MemberCount(ctx context.Context, roomID string) (int64, error)
 	Members(ctx context.Context, roomID string) ([]MembersRow, error)
 	MuteUser(ctx context.Context, arg MuteUserParams) (int64, error)
 	MyInvitations(ctx context.Context, userID string) ([]MyInvitationsRow, error)
@@ -122,6 +129,9 @@ type Querier interface {
 	SetRoomStatus(ctx context.Context, arg SetRoomStatusParams) error
 	StaleControllers(ctx context.Context) ([]string, error)
 	TakeControl(ctx context.Context, arg TakeControlParams) (int64, error)
+	// Records activity at most hourly. A guest's sessions slide forward, so a
+	// guest who keeps playing is never signed out.
+	TouchUser(ctx context.Context, id string) error
 	UnblockUser(ctx context.Context, arg UnblockUserParams) error
 	UnmuteUser(ctx context.Context, arg UnmuteUserParams) error
 	UpdateRoom(ctx context.Context, arg UpdateRoomParams) error
