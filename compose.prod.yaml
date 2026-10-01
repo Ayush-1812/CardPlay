@@ -1,0 +1,97 @@
+name: cardplay-prod
+# A whole deployment on one host: Caddy terminates TLS for a single public
+# origin, the client and API sit behind it on a private network, and the
+# database is reachable only from inside. Settings come from .env.prod
+# (see .env.prod.example).
+#
+#   sh deploy/make-db-certs.sh
+#   docker compose -f compose.prod.yaml --env-file .env.prod up -d --build
+services:
+  db:
+    image: postgres:18.6-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set it in .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:?set it in .env.prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env.prod}
+    # Production verifies the database certificate, so TLS is on even here.
+    command:
+      [
+        "postgres",
+        "-c",
+        "ssl=on",
+        "-c",
+        "ssl_cert_file=/certs/server.crt",
+        "-c",
+        "ssl_key_file=/certs/server.key",
+      ]
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./deploy/certs:/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    image: cardplay-api:prod
+    command: ["migrate"]
+    restart: "no"
+    environment: &api-env
+      APP_ENV: production
+      HTTP_ADDR: :8080
+      APP_ORIGIN: https://${SITE_ADDRESS:?set it in .env.prod}
+      # The API trusts the private CA from deploy/make-db-certs.sh.
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/certs/ca.crt
+      SMTP_ADDR: ${SMTP_ADDR:?set it in .env.prod}
+      SMTP_USERNAME: ${SMTP_USERNAME:?set it in .env.prod}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?set it in .env.prod}
+      MAIL_FROM: ${MAIL_FROM:?set it in .env.prod}
+      MATCH_TURN_TIMEOUT: ${MATCH_TURN_TIMEOUT:-2m}
+    volumes: &api-volumes
+      - ./deploy/certs/ca.crt:/certs/ca.crt:ro
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    build: .
+    image: cardplay-api:prod
+    restart: unless-stopped
+    environment: *api-env
+    volumes: *api-volumes
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "/cardplay", "health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: ./web
+      args:
+        API_INTERNAL_URL: http://api:8080
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+      ACME_EMAIL: ${ACME_EMAIL:?set it in .env.prod}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on: [web]
+
+volumes:
+  pgdata:
+  caddydata:
+  caddyconfig:

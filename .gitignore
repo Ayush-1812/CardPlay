@@ -1,6 +1,9 @@
 .env
 .env.*
 !.env.example
+!.env.prod.example
+# Private CA and database certificate for the production stack.
+deploy/certs/
 .local/
 .tools/
 bin/

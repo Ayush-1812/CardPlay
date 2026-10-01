@@ -309,6 +309,49 @@ func (m *Module) Guest(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, 201, map[string]any{"id": u.ID, "handle": u.Handle, "display_name": u.DisplayName, "email": "", "email_verified": false, "is_guest": true})
 }
 
+// SocketTicketTTL is how long a socket ticket may be used. It covers one
+// handshake, not a session.
+const SocketTicketTTL = 30 * time.Second
+
+// SocketTicket issues a one-shot credential for the WebSocket handshake. A
+// client whose session cookie cannot travel with the handshake, because the
+// API is on another site, asks for a ticket over the authenticated HTTP path
+// and presents it as ?ticket=. The ticket dies with the session it came from,
+// is deleted the first time it is used, and expires in seconds.
+func (m *Module) SocketTicket(w http.ResponseWriter, r *http.Request) {
+	a := httpx.Actor(r)
+	if a.SessionHash == "" {
+		httpx.Error(w, r, 401, "UNAUTHENTICATED", "Sign in to continue")
+		return
+	}
+	token := httpx.Token()
+	expires := time.Now().Add(SocketTicketTTL)
+	err := store.New(m.DB).CreateSocketTicket(r.Context(), store.CreateSocketTicketParams{TokenHash: httpx.Hash(token), UserID: a.ID, SessionHash: a.SessionHash, ExpiresAt: expires})
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	httpx.JSON(w, 201, map[string]any{"ticket": token, "expires_at": expires.UTC()})
+}
+
+// AuthenticateTicket admits a handshake that carries a valid ticket instead of
+// a session cookie. It runs after Authenticate, so a cookie that did arrive is
+// always preferred and the ticket is left unspent.
+func (m *Module) AuthenticateTicket(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ticket := r.URL.Query().Get("ticket")
+		if httpx.Actor(r).ID != "" || len(ticket) != 64 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		u, err := store.New(m.DB).ConsumeSocketTicket(r.Context(), httpx.Hash(ticket))
+		if err == nil {
+			r = r.WithContext(httpx.WithIdentity(r.Context(), httpx.Identity{ID: u.ID, Handle: u.Handle, DisplayName: u.DisplayName, Email: u.Email, Verified: u.EmailVerified, Guest: u.IsGuest, SessionHash: u.SessionHash}))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (m *Module) inTx(ctx context.Context, fn func(q *store.Queries) error) error {
 	tx, err := m.DB.Begin(ctx)
 	if err != nil {

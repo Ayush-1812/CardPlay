@@ -123,6 +123,9 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 			r.Get("/sessions", auth.Sessions)
 			r.Delete("/sessions/{sessionID}", auth.RevokeSession)
 			r.Post("/auth/logout", auth.Logout)
+			// One-shot credential for a WebSocket handshake that cannot carry
+			// the session cookie (a client hosted on another site).
+			r.With(newLimiter(120, time.Minute)).Post("/realtime/ticket", auth.SocketTicket)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.Verified, newLimiter(120, time.Minute))
@@ -157,7 +160,7 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 			r.With(newLimiter(20, time.Minute)).Post("/matches/{matchID}/abandon", match.Vote)
 		})
 	})
-	r.With(auth.Authenticate, httpx.Verified).Get("/ws", hub.ServeHTTP)
+	r.With(auth.Authenticate, auth.AuthenticateTicket, httpx.Verified).Get("/ws", hub.ServeHTTP)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, 404, "NOT_FOUND", "Endpoint not found")
 	})

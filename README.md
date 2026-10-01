@@ -58,7 +58,7 @@ npm run lint
 npm run build
 ```
 
-Browser end-to-end tests (Playwright) are in [scripts/e2e](scripts/e2e/README.md) and a WebSocket load generator is in `scripts/loadtest`. Logs, metrics, health checks, capacity, backup and restore are in [docs/10-operations.md](docs/10-operations.md); the release gate is [docs/11-release-checklist.md](docs/11-release-checklist.md).
+Browser end-to-end tests (Playwright) are in [scripts/e2e](scripts/e2e/README.md) and a WebSocket load generator is in `scripts/loadtest`. Logs, metrics, health checks, capacity, backup and restore are in [docs/10-operations.md](docs/10-operations.md); the release gate is [docs/11-release-checklist.md](docs/11-release-checklist.md). Deploying the site is in [docs/12-deployment.md](docs/12-deployment.md).
 
 Go integration tests run when `TEST_DATABASE_URL` points to an **isolated** PostgreSQL database. CI provisions `cardplay_test` and runs them automatically. For local Compose testing, create it once with `docker compose exec -T db psql -U cardplay -d postgres -c 'CREATE DATABASE cardplay_test'`, set `TEST_DATABASE_URL` to the `DATABASE_URL` from `.env` with the database name changed to `cardplay_test`, and run the Go test command above. Tests only add unique test users and migrate the isolated database.
 

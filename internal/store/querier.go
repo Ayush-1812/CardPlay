@@ -33,6 +33,9 @@ type Querier interface {
 	CloseHostedRooms(ctx context.Context, hostID string) ([]string, error)
 	CloseRoom(ctx context.Context, id string) error
 	ConsumeAccountToken(ctx context.Context, arg ConsumeAccountTokenParams) (string, error)
+	// Single use: the handshake that presents the ticket deletes it and receives
+	// the player it belongs to, provided the underlying session is still valid.
+	ConsumeSocketTicket(ctx context.Context, tokenHash string) (ConsumeSocketTicketRow, error)
 	ControllerDisconnected(ctx context.Context, arg ControllerDisconnectedParams) (int64, error)
 	ControllerHeartbeat(ctx context.Context, arg ControllerHeartbeatParams) (int64, error)
 	ControllerReturned(ctx context.Context, arg ControllerReturnedParams) (int64, error)
@@ -43,12 +46,14 @@ type Querier interface {
 	CreateMatch(ctx context.Context, arg CreateMatchParams) (Match, error)
 	CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	CreateSocketTicket(ctx context.Context, arg CreateSocketTicketParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeclineFriend(ctx context.Context, arg DeclineFriendParams) (int64, error)
 	DeleteAccountTokens(ctx context.Context, userID string) error
 	DeleteBlocks(ctx context.Context, userID string) error
 	DeleteExpiredLoginDevices(ctx context.Context) error
 	DeleteExpiredSessions(ctx context.Context) error
+	DeleteExpiredSocketTickets(ctx context.Context) error
 	DeleteFriendships(ctx context.Context, requesterID string) error
 	// Rooms nobody has had open for an hour go, with their games (owner decision
 	// 2026-10-01). A room locked by a join or move in progress is skipped.

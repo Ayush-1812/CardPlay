@@ -25,6 +25,13 @@ import { GameEntry, GameLobby, GamesScreen } from "./screens/home";
 import { RoomScreen } from "./screens/room";
 
 const SESSION_ENDED = "Your session ended. Sign in again.";
+// Set only when the API is published on its own origin, which Vercel-style
+// deployments need because they cannot proxy a WebSocket. Empty means the
+// socket is same-origin, proxied next to /api by the web server.
+const API_ORIGIN = (process.env.NEXT_PUBLIC_API_ORIGIN ?? "").replace(
+  /\/$/,
+  "",
+);
 // Server WebSocket close codes; any other close is transient and retried.
 const CLOSE_SESSION_ENDED = 4001;
 const CLOSE_ROOM_UNAVAILABLE = 4004;
@@ -357,87 +364,116 @@ export function Dashboard() {
       else if (e instanceof APIError && e.status === 404) roomGone();
       else setError(e.message);
     };
+    // Where the socket lives. Same origin by default, which is how the
+    // Docker image and local development run. When the API is published on
+    // its own origin the session cookie cannot travel with the handshake, so
+    // the client asks for a one-shot ticket over the authenticated HTTP path.
+    const socketURL = async () => {
+      if (!API_ORIGIN)
+        return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+      const { ticket } = await api<{ ticket: string }>(
+        "/realtime/ticket",
+        "POST",
+      );
+      return `${API_ORIGIN.replace(/^http/, "ws")}/ws?ticket=${encodeURIComponent(ticket)}`;
+    };
     const connect = () => {
       if (!active) return;
       setConnection("Connecting");
-      socket = new WebSocket(
-        `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
-      );
-      socket.onopen = () => {
-        attempt = 0;
-        subscribed = null;
-        setConnection("Connected");
-        socket?.send(
-          JSON.stringify({
-            v: 1,
-            type: "room.subscribe",
-            id: crypto.randomUUID(),
-            room_id: selected,
-          }),
-        );
-        void Promise.all([loadRoom(), loadChat(selected, true)]).catch(
-          onLoadError,
-        );
-      };
-      socket.onmessage = (event) => {
-        const message = JSON.parse(event.data) as {
-          type: string;
-          id?: string;
-          payload?: unknown;
-        };
-        const reply = message.id ? replies.get(message.id) : undefined;
-        if (reply) {
-          replies.delete(message.id!);
-          reply(message as Reply);
-        }
-        if (message.type === "room.snapshot" && message.payload) {
-          setView(message.payload as RoomView);
-          syncMatch(message.payload as RoomView);
-        }
-        if (message.type === "match.state" && message.payload) {
-          // Stamp arrival so the turn clock counts down locally without
-          // depending on the client's clock matching the server's.
-          const next = {
-            ...(message.payload as MatchState),
-            received_at: Date.now(),
+      void socketURL().then(
+        (url) => {
+          if (!active) return;
+          socket = new WebSocket(url);
+          socket.onopen = () => {
+            attempt = 0;
+            subscribed = null;
+            setConnection("Connected");
+            socket?.send(
+              JSON.stringify({
+                v: 1,
+                type: "room.subscribe",
+                id: crypto.randomUUID(),
+                room_id: selected,
+              }),
+            );
+            void Promise.all([loadRoom(), loadChat(selected, true)]).catch(
+              onLoadError,
+            );
           };
-          // Pushes may overtake each other; keep the newest version.
-          setMatch((current) =>
-            !current ||
-            current.match_id !== next.match_id ||
-            next.version >= current.version
-              ? next
-              : current,
+          socket.onmessage = (event) => {
+            const message = JSON.parse(event.data) as {
+              type: string;
+              id?: string;
+              payload?: unknown;
+            };
+            const reply = message.id ? replies.get(message.id) : undefined;
+            if (reply) {
+              replies.delete(message.id!);
+              reply(message as Reply);
+            }
+            if (message.type === "room.snapshot" && message.payload) {
+              setView(message.payload as RoomView);
+              syncMatch(message.payload as RoomView);
+            }
+            if (message.type === "match.state" && message.payload) {
+              // Stamp arrival so the turn clock counts down locally without
+              // depending on the client's clock matching the server's.
+              const next = {
+                ...(message.payload as MatchState),
+                received_at: Date.now(),
+              };
+              // Pushes may overtake each other; keep the newest version.
+              setMatch((current) =>
+                !current ||
+                current.match_id !== next.match_id ||
+                next.version >= current.version
+                  ? next
+                  : current,
+              );
+            }
+            if (message.type === "room.updated")
+              void loadRoom().catch(onLoadError);
+            if (message.type === "chat.updated")
+              void loadChat(selected, false).catch(onLoadError);
+          };
+          socket.onclose = (event) => {
+            for (const resolve of replies.values()) resolve(offline);
+            replies.clear();
+            if (!active) return;
+            if (event.code === CLOSE_REPLACED) {
+              setReplaced(true);
+              setConnection("Open in another tab");
+              return;
+            }
+            if (event.code === CLOSE_SESSION_ENDED) {
+              endSession(SESSION_ENDED);
+              return;
+            }
+            if (event.code === CLOSE_ROOM_UNAVAILABLE) {
+              roomGone();
+              return;
+            }
+            setConnection("Reconnecting");
+            retry = setTimeout(
+              connect,
+              Math.min(1000 * 2 ** attempt++, 15000) + Math.random() * 300,
+            );
+          };
+          socket.onerror = () => socket?.close();
+        },
+        (e: Error) => {
+          if (!active) return;
+          if (sessionEnded(e)) {
+            endSession(SESSION_ENDED);
+            return;
+          }
+          setConnection("Reconnecting");
+          retry = setTimeout(
+            connect,
+            Math.min(1000 * 2 ** attempt++, 15000) + Math.random() * 300,
           );
-        }
-        if (message.type === "room.updated") void loadRoom().catch(onLoadError);
-        if (message.type === "chat.updated")
-          void loadChat(selected, false).catch(onLoadError);
-      };
-      socket.onclose = (event) => {
-        for (const resolve of replies.values()) resolve(offline);
-        replies.clear();
-        if (!active) return;
-        if (event.code === CLOSE_REPLACED) {
-          setReplaced(true);
-          setConnection("Open in another tab");
-          return;
-        }
-        if (event.code === CLOSE_SESSION_ENDED) {
-          endSession(SESSION_ENDED);
-          return;
-        }
-        if (event.code === CLOSE_ROOM_UNAVAILABLE) {
-          roomGone();
-          return;
-        }
-        setConnection("Reconnecting");
-        retry = setTimeout(
-          connect,
-          Math.min(1000 * 2 ** attempt++, 15000) + Math.random() * 300,
-        );
-      };
-      socket.onerror = () => socket?.close();
+        },
+      );
     };
     connect();
     return () => {

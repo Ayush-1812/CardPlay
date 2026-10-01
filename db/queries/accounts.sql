@@ -65,3 +65,17 @@ FROM touched t WHERE s.user_id=t.user_id AND t.is_guest;
 -- name: IdleGuests :many
 SELECT id FROM users WHERE is_guest AND deleted_at IS NULL AND last_active_at < now()-interval '7 days'
 ORDER BY last_active_at LIMIT 200;
+-- name: CreateSocketTicket :exec
+INSERT INTO socket_tickets(token_hash,user_id,session_hash,expires_at) VALUES($1,$2,$3,$4);
+-- name: ConsumeSocketTicket :one
+-- Single use: the handshake that presents the ticket deletes it and receives
+-- the player it belongs to, provided the underlying session is still valid.
+WITH used AS (
+  DELETE FROM socket_tickets t WHERE t.token_hash=$1 AND t.expires_at>now() RETURNING t.user_id,t.session_hash
+)
+SELECT u.id,u.handle,u.display_name,u.email,u.email_verified,u.is_guest,t.session_hash
+FROM used t JOIN users u ON u.id=t.user_id
+JOIN sessions s ON s.token_hash=t.session_hash AND s.expires_at>now()
+WHERE u.deleted_at IS NULL;
+-- name: DeleteExpiredSocketTickets :exec
+DELETE FROM socket_tickets WHERE expires_at<=now();

@@ -129,7 +129,7 @@ BACKUP_DIR=/var/backups/cardplay scripts/ops/backup.sh
 - The role needs `SELECT` on all tables.
 - Alert if no new archive appears for 26 hours.
 
-With Docker Compose locally:
+The production stack on one host is [`compose.prod.yaml`](../compose.prod.yaml); see [12-deployment.md](12-deployment.md). With Docker Compose locally:
 
 ```sh
 docker compose exec -T db pg_dump -U cardplay -d cardplay --format=custom > cardplay.dump
@@ -166,7 +166,7 @@ Repeat the drill every quarter and after any schema change.
 
 ## Routine operations
 
-- **Deploy.** Run `cardplay migrate` once (it takes an advisory lock, so concurrent runs are safe), then roll the API instances. A restarted instance loses no acknowledged command. Clients reconnect with backoff and resynchronize. Matches pause while a seat is disconnected and resume on reconnect.
+- **Deploy.** Deployment guide: [12-deployment.md](12-deployment.md). Run `cardplay migrate` once (it takes an advisory lock, so concurrent runs are safe), then roll the API instances. A restarted instance loses no acknowledged command. Clients reconnect with backoff and resynchronize. Matches pause while a seat is disconnected and resume on reconnect.
 - **Rollback.** Migrations roll back one step at a time with `cardplay migrate-down`, which is disabled in production. Test down migrations in staging (CI checks up/down/up on every change). In production, prefer a forward fix or a restore.
 - **Background jobs.** These run inside every API instance:
   - every 5 s: host transfer, match presence sweeps and turn timeouts;

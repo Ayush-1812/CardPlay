@@ -157,6 +157,14 @@ type Session struct {
 	ID        string    `json:"id"`
 }
 
+type SocketTicket struct {
+	TokenHash   string    `json:"token_hash"`
+	UserID      string    `json:"user_id"`
+	SessionHash string    `json:"session_hash"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type User struct {
 	ID            string     `json:"id"`
 	Email         string     `json:"email"`

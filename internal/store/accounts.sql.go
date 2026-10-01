@@ -92,6 +92,43 @@ func (q *Queries) ConsumeAccountToken(ctx context.Context, arg ConsumeAccountTok
 	return user_id, err
 }
 
+const consumeSocketTicket = `-- name: ConsumeSocketTicket :one
+WITH used AS (
+  DELETE FROM socket_tickets t WHERE t.token_hash=$1 AND t.expires_at>now() RETURNING t.user_id,t.session_hash
+)
+SELECT u.id,u.handle,u.display_name,u.email,u.email_verified,u.is_guest,t.session_hash
+FROM used t JOIN users u ON u.id=t.user_id
+JOIN sessions s ON s.token_hash=t.session_hash AND s.expires_at>now()
+WHERE u.deleted_at IS NULL
+`
+
+type ConsumeSocketTicketRow struct {
+	ID            string `json:"id"`
+	Handle        string `json:"handle"`
+	DisplayName   string `json:"display_name"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	IsGuest       bool   `json:"is_guest"`
+	SessionHash   string `json:"session_hash"`
+}
+
+// Single use: the handshake that presents the ticket deletes it and receives
+// the player it belongs to, provided the underlying session is still valid.
+func (q *Queries) ConsumeSocketTicket(ctx context.Context, tokenHash string) (ConsumeSocketTicketRow, error) {
+	row := q.db.QueryRow(ctx, consumeSocketTicket, tokenHash)
+	var i ConsumeSocketTicketRow
+	err := row.Scan(
+		&i.ID,
+		&i.Handle,
+		&i.DisplayName,
+		&i.Email,
+		&i.EmailVerified,
+		&i.IsGuest,
+		&i.SessionHash,
+	)
+	return i, err
+}
+
 const createAccountToken = `-- name: CreateAccountToken :exec
 INSERT INTO account_tokens(token_hash,user_id,purpose,expires_at) VALUES($1,$2,$3,$4)
 `
@@ -171,6 +208,27 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const createSocketTicket = `-- name: CreateSocketTicket :exec
+INSERT INTO socket_tickets(token_hash,user_id,session_hash,expires_at) VALUES($1,$2,$3,$4)
+`
+
+type CreateSocketTicketParams struct {
+	TokenHash   string    `json:"token_hash"`
+	UserID      string    `json:"user_id"`
+	SessionHash string    `json:"session_hash"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+func (q *Queries) CreateSocketTicket(ctx context.Context, arg CreateSocketTicketParams) error {
+	_, err := q.db.Exec(ctx, createSocketTicket,
+		arg.TokenHash,
+		arg.UserID,
+		arg.SessionHash,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users(email,handle,display_name,password_hash,email_verified) VALUES ($1,$2,$3,$4,$5) RETURNING id, email, handle, display_name, password_hash, email_verified, created_at, deleted_at, is_guest, last_active_at
 `
@@ -240,6 +298,15 @@ DELETE FROM sessions WHERE expires_at<=now()
 
 func (q *Queries) DeleteExpiredSessions(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteExpiredSessions)
+	return err
+}
+
+const deleteExpiredSocketTickets = `-- name: DeleteExpiredSocketTickets :exec
+DELETE FROM socket_tickets WHERE expires_at<=now()
+`
+
+func (q *Queries) DeleteExpiredSocketTickets(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteExpiredSocketTickets)
 	return err
 }
 

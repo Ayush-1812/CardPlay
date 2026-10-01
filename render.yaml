@@ -1,0 +1,38 @@
+# Render blueprint for the Go API. The Next.js client is deployed separately
+# (Vercel, or a second service here); see docs/12-deployment.md.
+#
+# Secrets are deliberately not in this file: DATABASE_URL, SMTP_USERNAME and
+# SMTP_PASSWORD are set in the Render dashboard, and APP_ORIGIN must be the
+# exact origin the browser uses, with no trailing slash.
+services:
+  - type: web
+    name: cardplay-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /readyz
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: HTTP_ADDR
+        value: :10000
+      - key: PORT
+        value: 10000
+      # The client's origin, not this service's. It is the only accepted
+      # Origin for writes and WebSocket handshakes.
+      - key: APP_ORIGIN
+        sync: false
+      # PostgreSQL. Use a direct connection string, never a transaction
+      # pooler: notifications are lost through one. Production requires
+      # sslmode=verify-full.
+      - key: DATABASE_URL
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: SMTP_ADDR
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false

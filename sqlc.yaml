@@ -11,6 +11,7 @@ sql:
       - db/migrations/000007_match_runtime.up.sql
       - db/migrations/000008_turn_timeout.up.sql
       - db/migrations/000009_guests_and_temporary_rooms.up.sql
+      - db/migrations/000010_socket_tickets.up.sql
     queries: db/queries
     gen:
       go:

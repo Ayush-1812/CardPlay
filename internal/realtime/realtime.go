@@ -480,6 +480,7 @@ func (h *Hub) Run(ctx context.Context) {
 			_ = q.PurgeOutbox(ctx)
 			_ = q.DeleteExpiredSessions(ctx)
 			_ = q.DeleteExpiredLoginDevices(ctx)
+			_ = q.DeleteExpiredSocketTickets(ctx)
 			_ = h.Matches.Retention(ctx)
 			for _, job := range h.Hourly {
 				if err := job(ctx); err != nil && ctx.Err() == nil {

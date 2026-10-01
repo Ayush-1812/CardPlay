@@ -5,7 +5,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 ARG API_INTERNAL_URL=http://api:8080
-ENV API_INTERNAL_URL=$API_INTERNAL_URL
+ENV API_INTERNAL_URL=$API_INTERNAL_URL STANDALONE_BUILD=1
 RUN npm run build
 FROM node:24.16.0-bookworm-slim AS runtime
 WORKDIR /app

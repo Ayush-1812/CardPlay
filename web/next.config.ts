@@ -2,6 +2,12 @@ import type { NextConfig } from "next";
 
 const api = process.env.API_INTERNAL_URL ?? "http://127.0.0.1:8080";
 const dev = process.env.NODE_ENV !== "production";
+// Set when the API is published on its own origin, so the browser opens the
+// WebSocket there instead of through this server. The CSP has to allow it.
+const apiOrigin = (process.env.NEXT_PUBLIC_API_ORIGIN ?? "").replace(/\/$/, "");
+const socketOrigins = apiOrigin
+  ? ` ${apiOrigin} ${apiOrigin.replace(/^http/, "ws")}`
+  : "";
 
 // Next.js hydration uses inline scripts, so script-src needs 'unsafe-inline'
 // (and 'unsafe-eval' in development). Everything else is locked to this
@@ -12,7 +18,7 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self'",
-  "connect-src 'self'",
+  `connect-src 'self'${socketOrigins}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -43,7 +49,9 @@ const securityHeaders = [
 ];
 
 const config: NextConfig = {
-  output: "standalone",
+  // Standalone is for the Docker image. Platforms that build the app
+  // themselves, such as Vercel, use their own output and reject it.
+  output: process.env.STANDALONE_BUILD === "1" ? "standalone" : undefined,
   poweredByHeader: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

@@ -15,6 +15,7 @@ Work through this list for every release. **Status** records the 2026-09-30 rele
 | Web formatting, types, lint | `npm run format:check && npm run typecheck && npm run lint` | ✅ |
 | Web production build | `npm run build` | ✅ (built from an identical copy of `web/`) |
 | Browser end-to-end (Playwright, Edge) | `cd scripts/e2e && npx playwright test` | ✅ 31/31 on 2026-10-01 after the new flow (guests, games list, temporary rooms, reference-style sheets, auto end turn, only-relevant choices). Includes the action-card spec (Birthday, Debt Collector with Just Say No, Sly Deal, Forced Deal, Deal Breaker, Rent paid in properties, placement, Reorganize) and a real server-side turn timeout |
+| Split-origin deployment (client and API on different origins) | Client built with `NEXT_PUBLIC_API_ORIGIN`, API on its own origin; two guests through sign-in, invite link, match start and live chat | ✅ 2026-10-01: socket opened with a ticket, live updates and chat crossed the split, no CSP refusals. Backed by `TestSocketTicket` (5 cases) |
 | Load test | `go run ./scripts/loadtest …` | ✅ 400 sockets / 197 commands/s with 0 errors; see capacity in the ops doc |
 | Backup/restore drill | `scripts/ops/backup.sh`, `restore.sh` | ✅ Backup under live load, restore, exact comparison, refusals, API ready on the restored database |
 
