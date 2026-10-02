@@ -186,8 +186,24 @@ export function CardSheet({
         }
       : null;
 
+  // Why a Double the Rent in hand can or cannot join this charge. Without it
+  // the doubler simply never appears and the player cannot tell why.
+  const doublerNote = () => {
+    if (myDoublers.length === 0) return undefined;
+    if (card.kind === "rent_any")
+      return "Double the Rent needs a two-color Rent card, so it cannot be added to this one.";
+    if (pub.plays_left < 2)
+      return `Double the Rent would need 2 plays; you have ${pub.plays_left} left.`;
+    return "You can add Double the Rent on the next step.";
+  };
+
   // Where "Use" leads, or why it cannot be used.
-  const use = (): { label: string; go?: () => void; why?: string } => {
+  const use = (): {
+    label: string;
+    go?: () => void;
+    why?: string;
+    note?: string;
+  } => {
     switch (action) {
       case "pass_go":
         return {
@@ -318,6 +334,7 @@ export function CardSheet({
           label: "Charge rent",
           why: "You have no matching property set to charge rent on.",
         };
+      const note = doublerNote();
       // One matching set: no question about which set. Only a Double the
       // Rent in hand still needs a step.
       if (rentSets.length === 1 && !canDouble) {
@@ -325,9 +342,14 @@ export function CardSheet({
         return {
           label: `Charge ${COLOR_NAMES[only.color]} rent (${only.rent}M)`,
           go: () => chargeSet(only.id),
+          note,
         };
       }
-      return { label: "Charge rent", go: () => setStep({ kind: "rent" }) };
+      return {
+        label: "Charge rent",
+        go: () => setStep({ kind: "rent" }),
+        note,
+      };
     }
     return { label: "Use" };
   };
@@ -366,6 +388,7 @@ export function CardSheet({
           <PlayingCard card={card} width={128} />
         </div>
         {u.why && <p className="sheet-note">{u.why}</p>}
+        {u.note && <p className="sheet-note">{u.note}</p>}
         <p className="sheet-hint">
           {pub.plays_left} play{pub.plays_left === 1 ? "" : "s"} left this turn
         </p>
