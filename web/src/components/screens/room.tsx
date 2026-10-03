@@ -93,6 +93,14 @@ export function RoomScreen({
 
   return (
     <main className="screen room">
+      <button
+        type="button"
+        className="sheet-back"
+        disabled={busy}
+        onClick={onLeave}
+      >
+        ← Leave room
+      </button>
       <div className="room-head">
         <div>
           <p className="eyebrow">Monopoly Deal · private room</p>

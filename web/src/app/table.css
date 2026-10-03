@@ -99,8 +99,12 @@
   text-overflow: ellipsis;
   min-width: 0;
 }
-.table-brand .brand-mark {
-  color: var(--accent);
+.table-home {
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
 }
 .table-room {
   margin-left: 12px;

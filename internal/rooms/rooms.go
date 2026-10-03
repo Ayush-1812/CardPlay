@@ -412,9 +412,6 @@ func (m *Module) Join(w http.ResponseWriter, r *http.Request) {
 	}
 	err = q.AddMember(ctx, store.AddMemberParams{RoomID: room.ID, UserID: actor, Seat: seat})
 	if err == nil {
-		err = q.ResetReady(ctx, room.ID)
-	}
-	if err == nil {
 		err = q.AcceptInvitation(ctx, invitation.ID)
 	}
 	if err == nil {

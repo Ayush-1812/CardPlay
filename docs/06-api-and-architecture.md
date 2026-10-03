@@ -44,7 +44,7 @@ All endpoints use JSON unless the response is `204`. Base path: `/api/v1`. A suc
 | `GET /api/v1/rooms/{roomID}/invitations` | none | Member | Own created invitation IDs, targets and expiry/status only; never a link token |
 | `GET /api/v1/invitations` | none | Verified | Pending personal friend invitations |
 | `DELETE /api/v1/invitations/{invitationID}` | none | Inviter or room host | `204` |
-| `POST /api/v1/rooms/join` | exactly one of `invitation_id` or `token` | Verified | `200` joined room. Room lock guards capacity, status and invitation reread. Joining resets everyone’s ready state. |
+| `POST /api/v1/rooms/join` | exactly one of `invitation_id` or `token` | Verified | `200` joined room. Room lock guards capacity, status and invitation reread. Existing members keep their ready state; the new member starts unready. |
 | `GET /api/v1/rooms/{roomID}/chat?after=ID` | numeric cursor | Member | Up to 100 messages, oldest first, last seven days; viewer-blocked senders filtered. Without a cursor (or `after=0`) returns the newest 100; with a cursor, the next 100 after it |
 | `POST /api/v1/rooms/{roomID}/chat` | UUID `client_id`, 1–500 char `body` | Member | `200` message; retries with same ID/body return prior message; five per ten seconds per account |
 | `POST /api/v1/rooms/{roomID}/chat/{messageID}/report` | `reason` 1–500 chars | Member | `204`; stores one report per reporter per message for moderator review; own or unknown messages rejected |

@@ -40,6 +40,8 @@ const CLOSE_ROOM_UNAVAILABLE = 4004;
 // Another tab or device took control of this seat; do not reconnect on our own
 // or the two tabs would keep taking the seat from each other.
 const CLOSE_REPLACED = 4009;
+const MATCH_SUBSCRIBE_TIMEOUT = 7000;
+const MATCH_SYNC_INTERVAL = 10000;
 
 type Reply = { type: string; payload?: { code?: string; message?: string } };
 
@@ -295,8 +297,11 @@ export function Dashboard() {
     let active = true;
     let socket: WebSocket | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let matchRetry: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    let matchAttempt = 0;
     let subscribed: string | null = null;
+    let subscribing: { matchID: string; requestID: string } | null = null;
     const replies = new Map<string, (reply: Reply) => void>();
     const offline: Reply = {
       type: "error",
@@ -315,6 +320,18 @@ export function Dashboard() {
         replies.set(id, resolve);
         socket.send(JSON.stringify({ v: 1, id, ...frame }));
       });
+    const clearMatchRetry = () => {
+      if (matchRetry) clearTimeout(matchRetry);
+      matchRetry = undefined;
+    };
+    const retryMatch = (delay: number) => {
+      clearMatchRetry();
+      matchRetry = setTimeout(() => {
+        matchRetry = undefined;
+        subscribing = null;
+        if (active) void loadRoom().catch(onLoadError);
+      }, delay);
+    };
     // Follow the room's match: subscribe to a live one (taking control of
     // our seat) or fetch the final result of an ended one.
     const syncMatch = (v: RoomView) => {
@@ -322,21 +339,27 @@ export function Dashboard() {
       if (
         !m ||
         subscribed === m.id ||
+        subscribing?.matchID === m.id ||
         !socket ||
         socket.readyState !== WebSocket.OPEN
       )
         return;
-      subscribed = m.id;
       if (liveMatch(m.status)) {
+        const requestID = crypto.randomUUID();
+        subscribing = { matchID: m.id, requestID };
         socket.send(
           JSON.stringify({
             v: 1,
-            id: crypto.randomUUID(),
+            id: requestID,
             type: "match.subscribe",
             match_id: m.id,
           }),
         );
+        // A lost frame or transient subscribe error must not strand this
+        // player without a hand until they refresh the page.
+        retryMatch(MATCH_SUBSCRIBE_TIMEOUT);
       } else {
+        subscribed = m.id;
         void api<MatchState>(`/matches/${m.id}`)
           .then((st) => {
             if (active) setMatch(st);
@@ -388,7 +411,10 @@ export function Dashboard() {
           socket = new WebSocket(url);
           socket.onopen = () => {
             attempt = 0;
+            matchAttempt = 0;
             subscribed = null;
+            subscribing = null;
+            clearMatchRetry();
             setConnection("Connected");
             socket?.send(
               JSON.stringify({
@@ -413,6 +439,13 @@ export function Dashboard() {
               replies.delete(message.id!);
               reply(message as Reply);
             }
+            if (
+              message.type === "error" &&
+              message.id === subscribing?.requestID
+            ) {
+              subscribing = null;
+              retryMatch(Math.min(1000 * 2 ** matchAttempt++, 15000));
+            }
             if (message.type === "room.snapshot" && message.payload) {
               setView(message.payload as RoomView);
               syncMatch(message.payload as RoomView);
@@ -424,6 +457,12 @@ export function Dashboard() {
                 ...(message.payload as MatchState),
                 received_at: Date.now(),
               };
+              if (subscribing?.matchID === next.match_id) {
+                subscribed = next.match_id;
+                subscribing = null;
+                matchAttempt = 0;
+                clearMatchRetry();
+              }
               // Pushes may overtake each other; keep the newest version.
               setMatch((current) =>
                 !current ||
@@ -441,6 +480,9 @@ export function Dashboard() {
           socket.onclose = (event) => {
             for (const resolve of replies.values()) resolve(offline);
             replies.clear();
+            subscribed = null;
+            subscribing = null;
+            clearMatchRetry();
             if (!active) return;
             if (event.code === CLOSE_REPLACED) {
               setReplaced(true);
@@ -477,11 +519,29 @@ export function Dashboard() {
         },
       );
     };
+    // Notifications are fast when delivered; this safety check repairs a
+    // missed room change or private hand update without a manual refresh.
+    const reconcile = setInterval(() => {
+      if (!active || socket?.readyState !== WebSocket.OPEN) return;
+      if (subscribed && liveMatch(matchRef.current?.status)) {
+        socket.send(
+          JSON.stringify({
+            v: 1,
+            id: crypto.randomUUID(),
+            type: "match.resync",
+          }),
+        );
+      } else {
+        void loadRoom().catch(onLoadError);
+      }
+    }, MATCH_SYNC_INTERVAL);
     connect();
     return () => {
       active = false;
       sendRef.current = null;
       if (retry) clearTimeout(retry);
+      clearMatchRetry();
+      clearInterval(reconcile);
       socket?.close();
     };
   }, [selected, userID, canPlay, refresh, loadChat, endSession, socketNonce]);
@@ -764,6 +824,7 @@ export function Dashboard() {
             chat={chatSection}
             unread={unread}
             onCommand={command}
+            onHome={() => openRoom(null)}
             onLeave={() =>
               void run(async () => {
                 await api(`/matches/${roomMatch.match_id}/leave`, "POST");
@@ -837,6 +898,7 @@ export function Dashboard() {
                 cards={cards}
                 busy
                 onCommand={command}
+                onHome={() => openRoom(null)}
                 onLeave={() => undefined}
                 onVote={() => undefined}
               />
@@ -978,8 +1040,8 @@ export function Dashboard() {
           type="button"
           className="brand"
           onClick={() => {
-            if (selected) return;
-            setGame(null);
+            if (selected) openRoom(null);
+            else setGame(null);
           }}
           aria-label="CardPlay home"
         >
