@@ -159,8 +159,8 @@ A database on the same host costs nothing, answers instantly, and needs only the
 Keep the client on Vercel and put the API elsewhere (Render's free tier, Fly, a VPS). The trade is more moving parts, a proxy hop and a few constraints. Vercel cannot proxy a WebSocket, so the client opens it directly against the API with a one-shot ticket: it calls `POST /api/v1/realtime/ticket` over the proxied, cookie-authenticated path, then connects to `wss://<api>/ws?ticket=…`. Tickets last 30 seconds, are deleted on first use and die with their session. Setting `NEXT_PUBLIC_API_ORIGIN` turns this on; leaving it unset keeps the plain same-origin socket.
 
 1. **Database:** Neon, using the **direct** connection string with `sslmode=verify-full`. Never a transaction pooler: `LISTEN/NOTIFY` carries every live update and a pooler drops it.
-2. **Migrate** from your own machine, since free plans have no shell: `DATABASE_URL='…' APP_ORIGIN=https://your-project.vercel.app go run ./cmd/cardplay migrate`.
-3. **API:** Render reads [`render.yaml`](../render.yaml) from the repository (New → Blueprint) and builds the root `Dockerfile`. Fill in `APP_ORIGIN` (the **client's** origin, exactly), `DATABASE_URL` and the SMTP values. `https://<api>/readyz` must return 200.
+2. **API:** Render reads [`render.yaml`](../render.yaml) from the repository (New → Blueprint) and builds the root `Dockerfile`. Fill in `APP_ORIGIN` (the **client's** origin, exactly), `DATABASE_URL` and the SMTP values. The Blueprint sets `MIGRATE_ON_START=1`, so the new API instance applies embedded migrations before it begins serving and `/readyz` can return 200. If the service was created outside the Blueprint, add that environment variable in Render's dashboard before redeploying.
+3. **Check the API:** `https://<api>/readyz` must return 200. The game catalog at `https://<api>/api/v1/games` must include both Monopoly Deal and Trump before deploying the client.
 4. **Client:** Vercel project with Root Directory `web` — without it Vercel finds `go.mod` at the repository root and tries to build a Go project. Set `API_INTERNAL_URL` and `NEXT_PUBLIC_API_ORIGIN` to the API's URL, and `ENABLE_HSTS=1`. Both URLs are baked in at build time, so changing them needs a redeploy.
 
 Things to know before choosing this: a free Render service **sleeps** after about 15 minutes idle, so the first visitor waits roughly a minute and the background sweeps stop meanwhile; and **preview deployments do not work**, because each gets a new URL while the API accepts exactly one origin.
@@ -172,7 +172,7 @@ A release is one migration step and one roll of the API. The client and the API 
 ### Release
 
 1. **Check the build.** `go test ./...`, the browser suite, and `sqlc diff` must be clean. The release checklist is [11-release-checklist.md](11-release-checklist.md).
-2. **Migrate first.** `cardplay migrate` takes an advisory lock, so running it twice or from two machines is safe. Migrations are embedded in the binary and checksummed: a server refuses to report ready if the database is behind or if an applied migration's checksum differs.
+2. **Apply migrations.** `cardplay migrate` takes an advisory lock, so running it twice or from two machines is safe. Migrations are embedded in the binary and checksummed: a server refuses to report ready if the database is behind or if an applied migration's checksum differs. The free Render Blueprint runs this step on startup with `MIGRATE_ON_START=1`; other deployments run `cardplay migrate` before rolling the API.
 3. **Roll the API.** A restarted instance loses no acknowledged command. Clients reconnect with backoff and resynchronise; matches pause while a seat is away and resume when it returns.
 4. **Deploy the client.** The API address is compiled into it, so a change there needs a rebuild, not a restart.
 5. **Verify.** `/readyz` must return 200 on every instance, then play one hand of each game.
