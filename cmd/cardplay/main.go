@@ -9,6 +9,7 @@ import (
 	"cardplay/internal/store"
 	"context"
 	"errors"
+	"fmt"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
@@ -74,7 +75,7 @@ func run() error {
 	case "migrate":
 		err = db.Migrate(ctx, pool, false)
 		if err != nil {
-			return errors.New("migration failed; check schema and database permissions")
+			return fmt.Errorf("migration failed: %w", err)
 		}
 		slog.Info("migrations applied")
 		return nil
@@ -109,6 +110,12 @@ func run() error {
 		slog.Info("seed accounts available", "accounts", "alice@cardplay.test, bob@cardplay.test, carol@cardplay.test")
 		return nil
 	case "serve":
+		if c.MigrateOnStart {
+			if err = db.Migrate(ctx, pool, false); err != nil {
+				return fmt.Errorf("migration failed: %w", err)
+			}
+			slog.Info("migrations applied before serving")
+		}
 	default:
 		return errors.New("usage: cardplay [serve|migrate|migrate-down|seed]")
 	}

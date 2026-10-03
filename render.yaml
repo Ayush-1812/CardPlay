@@ -19,6 +19,10 @@ services:
         value: :10000
       - key: PORT
         value: 10000
+      # Free web services cannot run a separate pre-deploy command. Apply
+      # embedded, checksummed migrations before this instance starts serving.
+      - key: MIGRATE_ON_START
+        value: "1"
       # The client's origin, not this service's. It is the only accepted
       # Origin for writes and WebSocket handshakes.
       - key: APP_ORIGIN

@@ -14,6 +14,9 @@ type Config struct {
 	Environment, Address, DatabaseURL, Origin, SMTPAddress, MailFrom, SMTPUsername, SMTPPassword string
 	SessionTTL                                                                                   time.Duration
 	SecureCookie                                                                                 bool
+	// MigrateOnStart lets a single-process host apply embedded migrations before
+	// serving traffic when it cannot run a separate pre-deploy command.
+	MigrateOnStart bool
 	// MetricsAddress serves /metrics on a separate listener when set. Bind it
 	// to a private interface: metrics are not authenticated.
 	MetricsAddress string
@@ -36,6 +39,13 @@ func Parse(get func(string) string) (Config, error) {
 	}
 	if c.Environment != "development" && c.Environment != "test" && c.Environment != "production" {
 		return c, errors.New("APP_ENV must be development, test or production")
+	}
+	switch get("MIGRATE_ON_START") {
+	case "", "0":
+	case "1":
+		c.MigrateOnStart = true
+	default:
+		return c, errors.New("MIGRATE_ON_START must be 0 or 1")
 	}
 	if _, _, err := net.SplitHostPort(c.Address); err != nil {
 		return c, errors.New("HTTP_ADDR must be host:port")
