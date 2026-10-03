@@ -106,6 +106,40 @@ test.describe.serial("trump at a four-seat table", () => {
     }
   });
 
+  test("a missed match subscription recovers without another refresh", async () => {
+    const player = players[3];
+    await player.page.addInitScript(() => {
+      const PreviousSocket = window.WebSocket;
+      window.WebSocket = class extends PreviousSocket {
+        send(data: Parameters<WebSocket["send"]>[0]) {
+          if (typeof data === "string") {
+            const frame = JSON.parse(data) as { type?: string };
+            if (
+              frame.type === "match.subscribe" &&
+              !sessionStorage.getItem("cardplay_test_dropped_subscribe")
+            ) {
+              sessionStorage.setItem("cardplay_test_dropped_subscribe", "1");
+              return;
+            }
+          }
+          super.send(data);
+        }
+      };
+    });
+    await player.page.reload();
+    await expect
+      .poll(() =>
+        player.page.evaluate(() =>
+          sessionStorage.getItem("cardplay_test_dropped_subscribe"),
+        ),
+      )
+      .toBe("1");
+    await expect(player.page.locator(".trump-hand .tcard")).toHaveCount(5, {
+      timeout: 15_000,
+    });
+    expect(self(player).hand).toHaveLength(5);
+  });
+
   test("the table shows seats, teams, counters and the toss result", async () => {
     const host = players[0];
     // Four seats, each naming its team; the partner is marked.

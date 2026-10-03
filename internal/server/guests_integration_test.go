@@ -103,6 +103,46 @@ func TestGuestsAndTemporaryRooms(t *testing.T) {
 		}
 	})
 
+	t.Run("a new player keeps earlier players ready", func(t *testing.T) {
+		host, hostID := guest("Ready host")
+		second, secondID := guest("Ready second")
+		third, thirdID := guest("New player")
+		status, room := do(host, "POST", "/api/v1/rooms", map[string]any{"name": "Ready table", "capacity": 3})
+		if status != 201 {
+			t.Fatalf("create room=%d %v", status, room)
+		}
+		roomID := room["id"].(string)
+		_, inv := do(host, "POST", "/api/v1/rooms/"+roomID+"/invitations", map[string]any{})
+		ready := func(cl *client) {
+			t.Helper()
+			if status, _ := do(cl, "PUT", "/api/v1/rooms/"+roomID+"/ready", map[string]any{"ready": true}); status != 204 {
+				t.Fatalf("ready=%d", status)
+			}
+		}
+		join := func(cl *client) {
+			t.Helper()
+			if status, _ := do(cl, "POST", "/api/v1/rooms/join", map[string]any{"token": inv["token"]}); status != 200 {
+				t.Fatalf("join=%d", status)
+			}
+		}
+		ready(host)
+		join(second)
+		ready(second)
+		join(third)
+		status, view := do(host, "GET", "/api/v1/rooms/"+roomID, nil)
+		if status != 200 {
+			t.Fatalf("room=%d %v", status, view)
+		}
+		members := map[string]bool{}
+		for _, item := range view["members"].([]any) {
+			member := item.(map[string]any)
+			members[member["id"].(string)] = member["ready"].(bool)
+		}
+		if len(members) != 3 || !members[hostID] || !members[secondID] || members[thirdID] {
+			t.Fatalf("readiness after join=%v", members)
+		}
+	})
+
 	t.Run("guests play and chat but cannot use friends", func(t *testing.T) {
 		host, _ := guest("Host")
 		other, _ := guest("Other")

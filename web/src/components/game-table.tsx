@@ -42,6 +42,7 @@ type Props = {
   cards: Cards;
   busy: boolean;
   onCommand: Command;
+  onHome: () => void;
   onLeave: () => void;
   onVote: (vote: boolean) => void;
   roomName?: string;
@@ -423,6 +424,7 @@ export function GameTable({
   cards,
   busy: busyProp,
   onCommand,
+  onHome,
   onLeave,
   onVote,
   roomName,
@@ -669,7 +671,9 @@ export function GameTable({
     >
       <header className="table-top">
         <div className="table-brand">
-          <span className="brand-mark">♣</span> CardPlay
+          <button type="button" className="table-home" onClick={onHome}>
+            CardPlay
+          </button>
           {roomName && <span className="table-room">{roomName}</span>}
         </div>
         <div className="table-top-actions">
