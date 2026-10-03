@@ -14,7 +14,18 @@ import (
 	"strconv"
 )
 
-type Module struct{ DB *pgxpool.Pool }
+// Gate is asked whether the game running in a room allows chat right now.
+// It is the match runtime in production; nil leaves chat always open.
+type Gate interface {
+	ChatOpen(ctx context.Context, q *store.Queries, roomID string) (bool, error)
+}
+
+// Module serves room chat. Rules engines can close chat for part of a match,
+// so a message is refused while the running game says so.
+type Module struct {
+	DB   *pgxpool.Pool
+	Gate Gate
+}
 type Error struct {
 	Code    string
 	Status  int
@@ -47,6 +58,19 @@ func (m *Module) Send(ctx context.Context, room, actor string, in Input) (store.
 	}
 	if !ok {
 		return store.RoomChat{}, &Error{"NOT_FOUND", 404, "Room not found"}
+	}
+	// A running game may forbid messages for part of a match, for example
+	// while a Trump team is choosing the trump suit and anything said could
+	// describe a hidden hand. The check shares this transaction, so it sees
+	// the same state the message would be stored against.
+	if m.Gate != nil {
+		open, err := m.Gate.ChatOpen(ctx, q, room)
+		if err != nil {
+			return store.RoomChat{}, err
+		}
+		if !open {
+			return store.RoomChat{}, &Error{"CHAT_CLOSED", 409, "Chat is closed while the trump is being chosen"}
+		}
 	}
 	// Account-wide lock makes the persisted rate limit safe across rooms.
 	if err = q.LockSocialPair(ctx, "chat:"+actor); err != nil {

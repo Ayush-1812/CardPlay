@@ -19,6 +19,8 @@ import {
 import { CardInfo, Cards, MatchState } from "../lib/game";
 import { ChatPanel } from "./chat";
 import { GameTable } from "./game-table";
+import { TrumpTable } from "./trump/trump-table";
+import { TrumpMatch } from "../lib/trump";
 import { AccountSheet, FriendsSheet } from "./screens/account";
 import { EntryScreen, VerifyScreen } from "./screens/entry";
 import { GameEntry, GameLobby, GamesScreen } from "./screens/home";
@@ -710,6 +712,39 @@ export function Dashboard() {
     );
 
   // The live table takes the whole screen.
+  if (
+    user &&
+    selected &&
+    showTable &&
+    roomMatch &&
+    roomMatch.game_id === "trump"
+  ) {
+    return (
+      <div className="app-table">
+        <TrumpTable
+          state={roomMatch as unknown as TrumpMatch}
+          me={user.id}
+          busy={gameBusy || replaced}
+          roomName={view?.room.name}
+          teamNames={
+            view ? [view.room.team_a ?? "", view.room.team_b ?? ""] : undefined
+          }
+          connection={connection}
+          alerts={alertsSection}
+          chat={chatSection}
+          unread={unread}
+          onCommand={command}
+          onLeave={() =>
+            void run(async () => {
+              await api(`/matches/${roomMatch.match_id}/leave`, "POST");
+              setNotice("You left the match. It ended with no winner.");
+            })
+          }
+        />
+      </div>
+    );
+  }
+
   if (user && selected && showTable && roomMatch) {
     return (
       <div className="app-table">
@@ -779,7 +814,10 @@ export function Dashboard() {
         link={link}
         friends={friends.filter((f) => f.status === "accepted")}
         result={
-          showResult && roomMatch && Object.keys(cards).length > 0 ? (
+          showResult &&
+          roomMatch &&
+          roomMatch.game_id !== "trump" &&
+          Object.keys(cards).length > 0 ? (
             <section
               className="panel match-panel"
               aria-label="Last match result"
@@ -855,10 +893,22 @@ export function Dashboard() {
             setNotice("Room closed.");
           })
         }
-        onUpdate={(name, capacity) =>
+        onUpdate={(name, capacity, teams) =>
           void run(async () => {
-            await api(`/rooms/${selected}`, "PATCH", { name, capacity });
+            await api(`/rooms/${selected}`, "PATCH", {
+              name,
+              capacity,
+              ...(teams ? { team_a: teams[0], team_b: teams[1] } : {}),
+            });
             setNotice("Room updated.");
+          })
+        }
+        onSeat={(userID, seat) =>
+          void run(async () => {
+            await api(`/rooms/${selected}/members/${userID}/seat`, "PUT", {
+              seat,
+            });
+            setNotice("Seats changed. Everyone needs to ready up again.");
           })
         }
         onMakeHost={(id, display) =>
@@ -889,7 +939,8 @@ export function Dashboard() {
             await applyName(name);
             const room = await api<Room>("/rooms", "POST", {
               name: `${name}'s table`.slice(0, 80),
-              capacity: 5,
+              capacity: game.seats ?? 5,
+              game: game.id,
             });
             await refresh();
             openRoom(room.id);

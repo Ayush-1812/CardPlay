@@ -60,7 +60,7 @@ Covered by `TestTimeoutActionIsAlwaysLegal` (200 random games), `TestTimeoutActi
 
 | Situation | Behavior |
 |---|---|
-| Awaited player connected but idle for 2 minutes | The server makes the default move for them (see above); play continues |
+| Awaited player connected but idle for 2 minutes | **Monopoly Deal only**: the server makes the default move for them and play continues. A game applies this only by implementing `game.TimeoutPolicy`; **Trump does not**, so a Trump match waits indefinitely for a connected player until an owner policy is approved |
 | Any seat absent | Match `paused`; every command is refused and the turn clock stops. It resumes automatically when all seats are present again, with a fresh clock |
 | New match | Starts `paused` and begins once every player has opened it |
 | Seat absent 5+ minutes | Players still present may vote to abandon. A unanimous vote ends the match with no winner (`voted`). Votes clear if the absent player returns |
@@ -79,6 +79,12 @@ When a match ends, the room returns to the lobby with readiness cleared, so a re
 5. A command that was in flight when the server stopped either committed (and a retry returns its recorded result) or did not (and the retry applies it once).
 
 With several API instances, the database lock and the controller generation keep one serial order per match. Each instance delivers notifications to its own sockets.
+
+## Game-controlled chat
+
+A rules engine may close room chat for part of a match by implementing `game.ChatPolicy`. Before a message is stored, the chat module asks the room's running game inside the same transaction that would write it, so the answer matches the state the message would be stored against. Trump closes chat while a team is choosing the trump suit, because anything said then could describe a hidden hand, and opens it again the moment the suit is named. A refused message returns `409 CHAT_CLOSED`.
+
+This restricts **this application's** communication features: room chat, quick replies and reactions. It cannot prevent players from talking to each other outside the app, over a call, another messaging app, or across the same room. The restriction removes the in-app channel and the temptation to use it; it is not a guarantee of no collusion, and the rules do not depend on one.
 
 ## Chat (P06)
 

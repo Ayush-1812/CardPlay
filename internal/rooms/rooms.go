@@ -1,11 +1,14 @@
 package rooms
 
 import (
+	"cardplay/internal/game"
 	"cardplay/internal/httpx"
 	"cardplay/internal/social"
 	"cardplay/internal/store"
 	"context"
 	"errors"
+	"fmt"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,7 +19,33 @@ import (
 
 var ErrForbidden = errors.New("not a room member")
 
-type Module struct{ DB *pgxpool.Pool }
+// Module serves rooms. Games is the registry a room's chosen game is
+// validated against, so a room can only be created for an installed game and
+// with a seat count that game accepts.
+type Module struct {
+	DB    *pgxpool.Pool
+	Games *game.Registry
+}
+
+// DefaultGame is used when a client does not name one, so older clients keep
+// creating Monopoly Deal rooms.
+const DefaultGame = "monopoly-deal"
+
+// describe resolves a game ID to its descriptor.
+func (m *Module) describe(id string) (game.Descriptor, bool) {
+	if id == "" {
+		id = DefaultGame
+	}
+	if m.Games == nil {
+		return game.Descriptor{}, false
+	}
+	g, ok := m.Games.Find(id)
+	if !ok || !g.Descriptor().Playable {
+		return game.Descriptor{}, false
+	}
+	return g.Descriptor(), true
+}
+
 type View struct {
 	Room    store.Room         `json:"room"`
 	Members []store.MembersRow `json:"members"`
@@ -95,13 +124,27 @@ func (m *Module) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name     string `json:"name"`
 		Capacity int32  `json:"capacity"`
+		Game     string `json:"game"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
 	var ok bool
-	if in.Name, ok = httpx.CleanText(in.Name, 80); !ok || in.Capacity < 2 || in.Capacity > 5 {
-		httpx.Error(w, r, 400, "INVALID_REQUEST", "Name is required; capacity must be 2-5")
+	if in.Name, ok = httpx.CleanText(in.Name, 80); !ok {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Name is required")
+		return
+	}
+	d, known := m.describe(in.Game)
+	if !known {
+		httpx.Error(w, r, 400, "UNKNOWN_GAME", "That game is not available")
+		return
+	}
+	// A game with a fixed seat count, like Trump's four, pins the capacity.
+	if in.Capacity == 0 && d.MinPlayers == d.MaxPlayers {
+		in.Capacity = int32(d.MinPlayers)
+	}
+	if int(in.Capacity) < d.MinPlayers || int(in.Capacity) > d.MaxPlayers {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", fmt.Sprintf("%s needs %d-%d players", d.Name, d.MinPlayers, d.MaxPlayers))
 		return
 	}
 	tx, err := m.DB.Begin(r.Context())
@@ -111,7 +154,7 @@ func (m *Module) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	q := store.New(tx)
-	room, err := q.CreateRoom(r.Context(), store.CreateRoomParams{HostID: httpx.Actor(r).ID, Name: in.Name, Capacity: in.Capacity})
+	room, err := q.CreateRoom(r.Context(), store.CreateRoomParams{HostID: httpx.Actor(r).ID, Name: in.Name, Capacity: in.Capacity, GameID: d.ID, RulesVersion: d.RulesVersion})
 	if err == nil {
 		err = q.AddMember(r.Context(), store.AddMemberParams{RoomID: room.ID, UserID: httpx.Actor(r).ID, Seat: 0})
 	}

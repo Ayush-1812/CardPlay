@@ -776,3 +776,27 @@ func AbandonForDeparture(ctx context.Context, q *store.Queries, userID string) e
 	}
 	return nil
 }
+
+// ChatOpen reports whether the game running in a room currently allows room
+// chat. Games that close chat for part of a match implement game.ChatPolicy;
+// anything else, including a room with no running match, leaves it open. The
+// caller's queries are used so the answer comes from the same transaction
+// that will store the message.
+func (m *Module) ChatOpen(ctx context.Context, q *store.Queries, roomID string) (bool, error) {
+	row, err := q.RoomGameState(ctx, roomID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	g, ok := m.Games.Get(row.GameID, row.RulesVersion)
+	if !ok {
+		return true, nil
+	}
+	policy, ok := g.(game.ChatPolicy)
+	if !ok {
+		return true, nil
+	}
+	return policy.ChatOpen(game.State{SchemaVersion: int(row.SchemaVersion), Data: row.State})
+}

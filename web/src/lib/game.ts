@@ -253,6 +253,7 @@ export type MatchEvent = {
 export type MatchState = {
   match_id: string;
   room_id: string;
+  game_id: string;
   status: "playing" | "paused" | "finished" | "abandoned";
   end_reason?: string;
   winner_id?: string;

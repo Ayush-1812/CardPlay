@@ -122,6 +122,8 @@ type Room struct {
 	Status       string    `json:"status"`
 	Revision     int64     `json:"revision"`
 	CreatedAt    time.Time `json:"created_at"`
+	TeamA        string    `json:"team_a"`
+	TeamB        string    `json:"team_b"`
 }
 
 type RoomBan struct {

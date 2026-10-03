@@ -1,6 +1,8 @@
 package rooms
 
 import (
+	"fmt"
+
 	"cardplay/internal/httpx"
 	"cardplay/internal/store"
 	"net/http"
@@ -31,14 +33,26 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name     string `json:"name"`
 		Capacity int32  `json:"capacity"`
+		TeamA    string `json:"team_a"`
+		TeamB    string `json:"team_b"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
 	var ok bool
-	if in.Name, ok = httpx.CleanText(in.Name, 80); !ok || in.Capacity < 2 || in.Capacity > 5 {
-		httpx.Error(w, r, 400, "INVALID_REQUEST", "Name is required; capacity must be 2-5")
+	if in.Name, ok = httpx.CleanText(in.Name, 80); !ok {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Name is required")
 		return
+	}
+	// Team names are optional: empty keeps the client's default label.
+	for _, team := range []*string{&in.TeamA, &in.TeamB} {
+		if *team == "" {
+			continue
+		}
+		if *team, ok = httpx.CleanText(*team, 24); !ok {
+			httpx.Error(w, r, 400, "INVALID_REQUEST", "Team names are 1-24 characters of plain text")
+			return
+		}
 	}
 	id := chi.URLParam(r, "roomID")
 	tx, err := m.DB.Begin(r.Context())
@@ -50,6 +64,15 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 	q := store.New(tx)
 	room, ok := hostWaiting(w, r, q, id)
 	if !ok {
+		return
+	}
+	d, known := m.describe(room.GameID)
+	if !known {
+		httpx.Error(w, r, 400, "UNKNOWN_GAME", "That game is not available")
+		return
+	}
+	if int(in.Capacity) < d.MinPlayers || int(in.Capacity) > d.MaxPlayers {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", fmt.Sprintf("%s needs %d-%d players", d.Name, d.MinPlayers, d.MaxPlayers))
 		return
 	}
 	members, err := q.Members(r.Context(), id)
@@ -67,7 +90,7 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err = q.UpdateRoom(r.Context(), store.UpdateRoomParams{ID: id, Name: in.Name, Capacity: in.Capacity}); err == nil {
+	if err = q.UpdateRoom(r.Context(), store.UpdateRoomParams{ID: id, Name: in.Name, Capacity: in.Capacity, TeamA: in.TeamA, TeamB: in.TeamB}); err == nil {
 		err = changed(r.Context(), q, id)
 	}
 	if err == nil {
@@ -302,4 +325,94 @@ func (m *Module) CreatedInvitations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, 200, map[string]any{"items": items})
+}
+
+// Seat moves one player to another seat, swapping with whoever is there.
+// Teams in a four-seat game are decided by seat (0 and 2 against 1 and 3), so
+// this is how players change team. Host only, and only before a match starts.
+func (m *Module) Seat(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Seat int32 `json:"seat"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	roomID, target := chi.URLParam(r, "roomID"), chi.URLParam(r, "userID")
+	if !httpx.UUID(target) {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "Invalid player")
+		return
+	}
+	tx, err := m.DB.Begin(r.Context())
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	q := store.New(tx)
+	room, ok := hostWaiting(w, r, q, roomID)
+	if !ok {
+		return
+	}
+	if in.Seat < 0 || in.Seat >= room.Capacity {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", "That seat does not exist at this table")
+		return
+	}
+	members, err := q.Members(r.Context(), roomID)
+	if err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	var mover, sitting *store.MembersRow
+	for i := range members {
+		if members[i].ID == target {
+			mover = &members[i]
+		}
+		if members[i].Seat == in.Seat {
+			sitting = &members[i]
+		}
+	}
+	if mover == nil {
+		httpx.Error(w, r, 404, "NOT_FOUND", "That player is not in this room")
+		return
+	}
+	if mover.Seat == in.Seat {
+		httpx.JSON(w, 200, map[string]any{"seat": in.Seat})
+		return
+	}
+	if sitting == nil {
+		// The seat is free: a plain move, no swap partner needed.
+		if err = q.SwapSeats(r.Context(), store.SwapSeatsParams{RoomID: roomID, First: mover.ID, FirstSeat: in.Seat, Second: mover.ID, SecondSeat: in.Seat}); err != nil {
+			httpx.DBError(w, r, err)
+			return
+		}
+	} else {
+		// Both rows change in one statement, so the seat uniqueness check
+		// has to wait until the transaction commits.
+		if _, err = tx.Exec(r.Context(), "SET CONSTRAINTS room_members_room_id_seat_key DEFERRED"); err != nil {
+			httpx.DBError(w, r, err)
+			return
+		}
+		if err = q.SwapSeats(r.Context(), store.SwapSeatsParams{
+			RoomID: roomID,
+			First:  mover.ID, FirstSeat: mover.Seat,
+			Second: sitting.ID, SecondSeat: in.Seat,
+		}); err != nil {
+			httpx.DBError(w, r, err)
+			return
+		}
+	}
+	// Changing the table clears readiness: everyone confirms the new seating.
+	if err = q.ResetReady(r.Context(), roomID); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if err = changed(r.Context(), q, roomID); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		httpx.DBError(w, r, err)
+		return
+	}
+	httpx.JSON(w, 200, map[string]any{"seat": in.Seat})
 }

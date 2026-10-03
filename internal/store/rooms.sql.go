@@ -125,17 +125,25 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 }
 
 const createRoom = `-- name: CreateRoom :one
-INSERT INTO rooms(host_id,name,capacity) VALUES($1,$2,$3) RETURNING id, host_id, name, game_id, rules_version, capacity, status, revision, created_at
+INSERT INTO rooms(host_id,name,capacity,game_id,rules_version) VALUES($1,$2,$3,$4,$5) RETURNING id, host_id, name, game_id, rules_version, capacity, status, revision, created_at, team_a, team_b
 `
 
 type CreateRoomParams struct {
-	HostID   string `json:"host_id"`
-	Name     string `json:"name"`
-	Capacity int32  `json:"capacity"`
+	HostID       string `json:"host_id"`
+	Name         string `json:"name"`
+	Capacity     int32  `json:"capacity"`
+	GameID       string `json:"game_id"`
+	RulesVersion string `json:"rules_version"`
 }
 
 func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error) {
-	row := q.db.QueryRow(ctx, createRoom, arg.HostID, arg.Name, arg.Capacity)
+	row := q.db.QueryRow(ctx, createRoom,
+		arg.HostID,
+		arg.Name,
+		arg.Capacity,
+		arg.GameID,
+		arg.RulesVersion,
+	)
 	var i Room
 	err := row.Scan(
 		&i.ID,
@@ -147,6 +155,8 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 		&i.Status,
 		&i.Revision,
 		&i.CreatedAt,
+		&i.TeamA,
+		&i.TeamB,
 	)
 	return i, err
 }
@@ -279,7 +289,7 @@ func (q *Queries) IsRoomBanned(ctx context.Context, arg IsRoomBannedParams) (boo
 }
 
 const lockRoom = `-- name: LockRoom :one
-SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at FROM rooms WHERE id=$1 FOR UPDATE
+SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at, team_a, team_b FROM rooms WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockRoom(ctx context.Context, id string) (Room, error) {
@@ -295,6 +305,8 @@ func (q *Queries) LockRoom(ctx context.Context, id string) (Room, error) {
 		&i.Status,
 		&i.Revision,
 		&i.CreatedAt,
+		&i.TeamA,
+		&i.TeamB,
 	)
 	return i, err
 }
@@ -410,7 +422,7 @@ func (q *Queries) MyInvitations(ctx context.Context, userID string) ([]MyInvitat
 }
 
 const myRooms = `-- name: MyRooms :many
-SELECT r.id, r.host_id, r.name, r.game_id, r.rules_version, r.capacity, r.status, r.revision, r.created_at FROM rooms r JOIN room_members m ON m.room_id=r.id WHERE m.user_id=$1 AND r.status<>'closed' ORDER BY r.created_at DESC LIMIT 100
+SELECT r.id, r.host_id, r.name, r.game_id, r.rules_version, r.capacity, r.status, r.revision, r.created_at, r.team_a, r.team_b FROM rooms r JOIN room_members m ON m.room_id=r.id WHERE m.user_id=$1 AND r.status<>'closed' ORDER BY r.created_at DESC LIMIT 100
 `
 
 func (q *Queries) MyRooms(ctx context.Context, userID string) ([]Room, error) {
@@ -432,6 +444,8 @@ func (q *Queries) MyRooms(ctx context.Context, userID string) ([]Room, error) {
 			&i.Status,
 			&i.Revision,
 			&i.CreatedAt,
+			&i.TeamA,
+			&i.TeamB,
 		); err != nil {
 			return nil, err
 		}
@@ -539,7 +553,7 @@ func (q *Queries) RevokeTargetRoomInvitations(ctx context.Context, arg RevokeTar
 }
 
 const room = `-- name: Room :one
-SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at FROM rooms WHERE id=$1
+SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at, team_a, team_b FROM rooms WHERE id=$1
 `
 
 func (q *Queries) Room(ctx context.Context, id string) (Room, error) {
@@ -555,6 +569,8 @@ func (q *Queries) Room(ctx context.Context, id string) (Room, error) {
 		&i.Status,
 		&i.Revision,
 		&i.CreatedAt,
+		&i.TeamA,
+		&i.TeamB,
 	)
 	return i, err
 }
@@ -631,17 +647,51 @@ func (q *Queries) SetRoomHost(ctx context.Context, arg SetRoomHostParams) error 
 	return err
 }
 
+const swapSeats = `-- name: SwapSeats :exec
+UPDATE room_members m SET seat = CASE WHEN m.user_id=$1::uuid THEN $2::int ELSE $3::int END
+WHERE m.room_id=$4 AND m.user_id IN ($1::uuid, $5::uuid)
+`
+
+type SwapSeatsParams struct {
+	First      string `json:"first"`
+	SecondSeat int32  `json:"second_seat"`
+	FirstSeat  int32  `json:"first_seat"`
+	RoomID     string `json:"room_id"`
+	Second     string `json:"second"`
+}
+
+// Exchanges two members seats in one statement. The caller defers the seat
+// uniqueness constraint for the transaction (see migration 000011).
+func (q *Queries) SwapSeats(ctx context.Context, arg SwapSeatsParams) error {
+	_, err := q.db.Exec(ctx, swapSeats,
+		arg.First,
+		arg.SecondSeat,
+		arg.FirstSeat,
+		arg.RoomID,
+		arg.Second,
+	)
+	return err
+}
+
 const updateRoom = `-- name: UpdateRoom :exec
-UPDATE rooms SET name=$2,capacity=$3 WHERE id=$1
+UPDATE rooms SET name=$2,capacity=$3,team_a=$4,team_b=$5 WHERE id=$1
 `
 
 type UpdateRoomParams struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Capacity int32  `json:"capacity"`
+	TeamA    string `json:"team_a"`
+	TeamB    string `json:"team_b"`
 }
 
 func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) error {
-	_, err := q.db.Exec(ctx, updateRoom, arg.ID, arg.Name, arg.Capacity)
+	_, err := q.db.Exec(ctx, updateRoom,
+		arg.ID,
+		arg.Name,
+		arg.Capacity,
+		arg.TeamA,
+		arg.TeamB,
+	)
 	return err
 }

@@ -8,6 +8,7 @@ import (
 	"cardplay/internal/config"
 	"cardplay/internal/game"
 	"cardplay/internal/game/monopoly"
+	"cardplay/internal/game/trump"
 	"cardplay/internal/httpx"
 	"cardplay/internal/matches"
 	"cardplay/internal/obs"
@@ -36,11 +37,14 @@ type App struct {
 
 func New(pool *pgxpool.Pool, c config.Config) *App {
 	auth := &accounts.Module{DB: pool, Config: c}
-	rm := &rooms.Module{DB: pool}
+	games := game.NewRegistry(monopoly.Module{}, trump.Module{})
+	rm := &rooms.Module{DB: pool, Games: games}
 	friends := &social.Module{DB: pool}
 	ch := &chat.Module{DB: pool}
-	games := game.NewRegistry(monopoly.Module{})
 	match := &matches.Module{DB: pool, Games: games, Random: rand.Reader, TurnTimeout: c.TurnTimeout}
+	// Room chat obeys the running game: Trump closes it while the trump is
+	// being chosen.
+	ch.Gate = match
 	hub := realtime.New(pool, rm, ch, match, c.Origin)
 	hub.Hourly = append(hub.Hourly, auth.PurgeIdleGuests)
 	r := chi.NewRouter()
@@ -142,6 +146,8 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 			r.Delete("/rooms/{roomID}", rm.Close)
 			r.Post("/rooms/{roomID}/leave", rm.Leave)
 			r.Put("/rooms/{roomID}/host", rm.TransferHost)
+			// Seat moves change teams in a game that pairs seats.
+			r.Put("/rooms/{roomID}/members/{userID}/seat", rm.Seat)
 			r.Delete("/rooms/{roomID}/members/{userID}", rm.Kick)
 			r.Put("/rooms/{roomID}/ready", rm.Ready)
 			r.Get("/rooms/{roomID}/invitations", rm.CreatedInvitations)

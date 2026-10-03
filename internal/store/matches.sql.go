@@ -592,6 +592,36 @@ func (q *Queries) RecentEvents(ctx context.Context, arg RecentEventsParams) ([]R
 	return items, nil
 }
 
+const roomGameState = `-- name: RoomGameState :one
+SELECT m.id,m.game_id,m.rules_version,s.schema_version,s.state FROM matches m
+JOIN LATERAL (SELECT gs.schema_version,gs.state FROM game_snapshots gs WHERE gs.match_id=m.id ORDER BY gs.revision DESC LIMIT 1) s ON true
+WHERE m.room_id=$1 AND m.status IN ('playing','paused') ORDER BY m.created_at DESC LIMIT 1
+`
+
+type RoomGameStateRow struct {
+	ID            string `json:"id"`
+	GameID        string `json:"game_id"`
+	RulesVersion  string `json:"rules_version"`
+	SchemaVersion int32  `json:"schema_version"`
+	State         []byte `json:"state"`
+}
+
+// The running match's engine and newest snapshot for a room, so platform
+// policies that depend on game state (chat during trump selection) can ask
+// the rules engine inside the caller's transaction.
+func (q *Queries) RoomGameState(ctx context.Context, roomID string) (RoomGameStateRow, error) {
+	row := q.db.QueryRow(ctx, roomGameState, roomID)
+	var i RoomGameStateRow
+	err := row.Scan(
+		&i.ID,
+		&i.GameID,
+		&i.RulesVersion,
+		&i.SchemaVersion,
+		&i.State,
+	)
+	return i, err
+}
+
 const setAbandonVote = `-- name: SetAbandonVote :exec
 UPDATE match_participants SET abandon_vote=$3 WHERE match_id=$1 AND user_id=$2
 `

@@ -1,11 +1,11 @@
 -- name: CreateRoom :one
-INSERT INTO rooms(host_id,name,capacity) VALUES($1,$2,$3) RETURNING *;
+INSERT INTO rooms(host_id,name,capacity,game_id,rules_version) VALUES($1,$2,$3,$4,$5) RETURNING *;
 -- name: Room :one
 SELECT * FROM rooms WHERE id=$1;
 -- name: LockRoom :one
 SELECT * FROM rooms WHERE id=$1 FOR UPDATE;
 -- name: UpdateRoom :exec
-UPDATE rooms SET name=$2,capacity=$3 WHERE id=$1;
+UPDATE rooms SET name=$2,capacity=$3,team_a=$4,team_b=$5 WHERE id=$1;
 -- name: SetRoomHost :exec
 UPDATE rooms SET host_id=$2 WHERE id=$1;
 -- name: CloseRoom :exec
@@ -78,3 +78,8 @@ DELETE FROM rooms WHERE id IN (
   AND NOT EXISTS (SELECT 1 FROM room_members m WHERE m.room_id=r.id AND m.last_seen_at > now()-interval '1 hour')
   ORDER BY r.created_at LIMIT 200 FOR UPDATE SKIP LOCKED
 ) RETURNING id;
+-- name: SwapSeats :exec
+-- Exchanges two members seats in one statement. The caller defers the seat
+-- uniqueness constraint for the transaction (see migration 000011).
+UPDATE room_members m SET seat = CASE WHEN m.user_id=sqlc.arg(first)::uuid THEN sqlc.arg(second_seat)::int ELSE sqlc.arg(first_seat)::int END
+WHERE m.room_id=sqlc.arg(room_id) AND m.user_id IN (sqlc.arg(first)::uuid, sqlc.arg(second)::uuid);

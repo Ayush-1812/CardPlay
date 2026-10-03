@@ -1,0 +1,837 @@
+/* Trump table. Phone first: one column that fits 412px with no sideways
+   scroll, widening into a real table at 768px. Suit is never carried by
+   colour alone -- every card shows its rank and suit symbol, and names are
+   written out wherever a suit is a choice. */
+
+.trump-table {
+  --felt: #15503a;
+  --felt-dark: #0f3b2b;
+  --line: rgba(239, 192, 73, 0.22);
+  --team-a: #6fb3ff;
+  --team-b: #ffb36f;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 100dvh;
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  background: radial-gradient(
+    120% 80% at 50% 0%,
+    var(--felt) 0%,
+    var(--felt-dark) 100%
+  );
+  color: var(--cream, #f3ead6);
+}
+
+/* ---- top bar ---- */
+.trump-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.trump-bar h1 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+.trump-round {
+  margin: 2px 0 0;
+  font-size: 12px;
+  opacity: 0.75;
+}
+.trump-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.trump-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 16px;
+  font-weight: 700;
+}
+.trump-indicator-name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.trump-indicator.none {
+  opacity: 0.6;
+}
+.conn {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.conn.bad {
+  background: #5b2525;
+  color: #ffd9d9;
+}
+
+/* ---- trick counters ---- */
+.counter {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px;
+}
+.counter.team-0 {
+  border-left-color: var(--team-a);
+}
+.counter.team-1 {
+  border-left-color: var(--team-b);
+}
+.counter.mine {
+  background: rgba(239, 192, 73, 0.12);
+}
+.counter-team {
+  grid-column: 1;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.8;
+}
+.counter-value {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+}
+.counter-of {
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.65;
+}
+.counter-rounds {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* ---- seats ---- */
+.tseat {
+  padding: 7px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-top-width: 3px;
+  background: rgba(0, 0, 0, 0.3);
+  min-width: 0;
+}
+.tseat.team-0 {
+  border-top-color: var(--team-a);
+}
+.tseat.team-1 {
+  border-top-color: var(--team-b);
+}
+.tseat.turn,
+.tseat.deciding {
+  outline: 2px solid var(--accent, #efc049);
+  outline-offset: 1px;
+}
+.tseat-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+.tseat-name {
+  font-weight: 700;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tseat-team {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.tseat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 3px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+.tseat-backs {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.tseat-flag {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.tseat-flag.turn-flag {
+  background: var(--accent, #efc049);
+  color: #1b1b1b;
+  font-weight: 700;
+}
+.tseat-flag.ready {
+  background: #1f6b45;
+}
+.tseat-flag.away {
+  background: #6b2525;
+}
+
+/* ---- felt and trick ---- */
+.trump-felt {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+  grid-template-areas:
+    ". top ."
+    "left trick right"
+    ". lead .";
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+}
+.tseat-top {
+  grid-area: top;
+}
+.tseat-left {
+  grid-area: left;
+}
+.tseat-right {
+  grid-area: right;
+}
+.trick-area {
+  grid-area: trick;
+  position: relative;
+  --trick-spread-x: 38px;
+  --trick-spread-y: 37px;
+  min-height: 168px;
+  border-radius: 16px;
+  border: 1px dashed var(--line);
+  background: rgba(0, 0, 0, 0.16);
+  display: grid;
+  place-items: center;
+}
+.trick-area.finished {
+  border-style: solid;
+}
+.trick-empty {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.7;
+  text-align: center;
+  padding: 0 8px;
+}
+.trick-card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) translate(var(--card-x), var(--card-y));
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+.trick-card.at-top {
+  --card-x: 0px;
+  --card-y: calc(-1 * var(--trick-spread-y));
+  --stack-angle: -9deg;
+}
+.trick-card.at-bottom {
+  --card-x: 0px;
+  --card-y: var(--trick-spread-y);
+  --stack-angle: 8deg;
+}
+.trick-card.at-left {
+  --card-x: calc(-1 * var(--trick-spread-x));
+  --card-y: 0px;
+  --stack-angle: -4deg;
+}
+.trick-card.at-right {
+  --card-x: var(--trick-spread-x);
+  --card-y: 0px;
+  --stack-angle: 4deg;
+}
+.trick-card.won .tcard {
+  outline: 3px solid var(--accent, #efc049);
+  outline-offset: 2px;
+}
+.trick-who {
+  font-size: 10px;
+  opacity: 0.85;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lead-note {
+  grid-area: lead;
+  margin: 0;
+  text-align: center;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* ---- cards ---- */
+.tcard {
+  position: relative;
+  display: inline-grid;
+  background: #fbf7ec;
+  color: #15181d;
+  border-radius: 7px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+.tcard-sm {
+  width: 26px;
+  height: 36px;
+}
+.tcard-md {
+  width: 46px;
+  height: 64px;
+}
+.tcard-lg {
+  width: 56px;
+  height: 78px;
+}
+.tcard-corner {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  display: grid;
+  line-height: 1;
+  font-weight: 800;
+}
+.tcard-sm .tcard-corner {
+  font-size: 10px;
+}
+.tcard-md .tcard-corner {
+  font-size: 13px;
+}
+.tcard-lg .tcard-corner {
+  font-size: 15px;
+}
+.tcard-suit {
+  font-size: 0.85em;
+}
+.tcard-pip {
+  place-self: center;
+  font-size: 22px;
+  line-height: 1;
+}
+.tcard-md .tcard-pip {
+  font-size: 24px;
+}
+.tcard-lg .tcard-pip {
+  font-size: 28px;
+}
+.tcard-sm .tcard-pip {
+  font-size: 15px;
+}
+/* Colour is decoration: the symbol and the written name carry the suit. */
+.suit-hearts,
+.suit-diamonds {
+  color: #a81f2b;
+}
+.suit-spades,
+.suit-clubs {
+  color: #15181d;
+}
+.tcard.dimmed {
+  filter: grayscale(0.7);
+  opacity: 0.45;
+}
+.tcard.playable {
+  outline: 2px solid var(--accent, #efc049);
+  outline-offset: 1px;
+}
+.tcard-back {
+  background: repeating-linear-gradient(45deg, #2b4c7e 0 4px, #1d3557 4px 8px);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* ---- hand ---- */
+.hand-area {
+  display: grid;
+  gap: 6px;
+  /* Grid and flex children default to min-width:auto, which would let the
+     rail grow to its content and scroll the whole page sideways. */
+  min-width: 0;
+}
+.hand-status {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.trump-hand-rail {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  gap: 4px;
+  margin: 0;
+  padding: 4px 0 8px;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+.hand-card-btn {
+  background: none;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  border-radius: 9px;
+  /* A comfortable touch target even though the card art is small. */
+  min-height: 44px;
+}
+.hand-card-btn:focus-visible {
+  outline: 3px solid var(--accent, #efc049);
+  outline-offset: 2px;
+}
+.hand-card-btn.legal:hover .tcard,
+.hand-card-btn.legal:focus-visible .tcard {
+  transform: translateY(-6px);
+}
+.hand-card-btn .tcard {
+  transition: transform 120ms ease;
+}
+.hand-card-btn.pending .tcard {
+  opacity: 0.5;
+}
+.refusal {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: #5b2525;
+  color: #ffd9d9;
+  font-size: 12px;
+}
+
+/* ---- actions, chat ---- */
+.trump-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+.chat-closed {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.trump-chat {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--felt-dark);
+  padding: 10px;
+  overflow: auto;
+}
+
+/* ---- selection and result sheets ---- */
+.trump-hand {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.suit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.suit-choice {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  padding: 12px 8px;
+  min-height: 72px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  background: #fbf7ec;
+  color: #15181d;
+  cursor: pointer;
+  font: inherit;
+}
+.suit-choice:focus-visible {
+  outline: 3px solid var(--accent, #efc049);
+  outline-offset: 2px;
+}
+.suit-mark {
+  font-size: 26px;
+  line-height: 1;
+}
+.suit-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+.suit-count {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.round-score {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 6px 0 10px;
+}
+.score-side {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid transparent;
+}
+.score-side.won {
+  border-color: var(--accent, #efc049);
+  background: rgba(239, 192, 73, 0.16);
+}
+.score-team {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+}
+.score-tricks {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1;
+}
+.score-label {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.rounds-line {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+.round-history {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.round-history th,
+.round-history td {
+  text-align: left;
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* ---- wider screens: a real table ---- */
+@media (min-width: 768px) {
+  .trump-table {
+    padding: 14px 22px;
+    gap: 14px;
+  }
+  .trump-bar h1 {
+    font-size: 22px;
+  }
+  .trump-felt {
+    grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr) minmax(140px, 1fr);
+    gap: 14px;
+  }
+  .trick-area {
+    min-height: 300px;
+    --trick-spread-x: 108px;
+    --trick-spread-y: 95px;
+  }
+  .tcard-lg {
+    width: 72px;
+    height: 100px;
+  }
+  .tcard-md {
+    width: 60px;
+    height: 84px;
+  }
+  .trump-hand-rail {
+    justify-content: center;
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+  .suit-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .trump-chat {
+    inset: 56px 0 0 auto;
+    width: min(380px, 100%);
+    border-left: 1px solid var(--line);
+  }
+}
+
+/* Respect a preference for less motion: nothing moves on its own. */
+@media (prefers-reduced-motion: reduce) {
+  .hand-card-btn .tcard,
+  .hand-card-btn.legal:hover .tcard,
+  .hand-card-btn.legal:focus-visible .tcard {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* High contrast: lean on borders rather than subtle fills. */
+@media (prefers-contrast: more) {
+  .tseat,
+  .counter,
+  .trick-area {
+    border-color: var(--cream, #f3ead6);
+  }
+}
+
+/* ---- the toss, said plainly ---- */
+.toss-banner {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--accent, #efc049);
+  background: rgba(239, 192, 73, 0.14);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.toss-label {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent, #efc049);
+  color: #1b1b1b;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.sheet-toss {
+  margin: 0 0 10px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--accent, #efc049);
+  background: rgba(239, 192, 73, 0.2);
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.sheet-toss-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.sheet-toss-team {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+/* ---- each team's won tricks, stacked ---- */
+/* Won tricks, stacked like a real pile: each card overlaps the one before,
+   so seven fit in the width of two. */
+.counter-pile {
+  display: flex;
+  align-items: center;
+  grid-column: 1 / -1;
+  min-height: 25px;
+  gap: 7px;
+  margin: 2px 0;
+  padding-left: 2px;
+}
+.trick-set {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  transform: rotate(-5deg);
+}
+.pile-card {
+  flex: none;
+  width: 13px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: repeating-linear-gradient(45deg, #2b4c7e 0 3px, #1d3557 3px 6px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.trick-set .pile-card + .pile-card {
+  margin-left: -9px;
+}
+.counter.collected {
+  animation: counter-bump 400ms ease 450ms both;
+}
+@keyframes counter-bump {
+  0% {
+    transform: none;
+  }
+  35% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+/* ---- collecting a finished trick ----
+   The four cards tilt in 3D and travel to the winning team's side, then the
+   table is clear for the next lead. */
+.trick-area {
+  perspective: 900px;
+  --collect-distance: 160px;
+}
+@media (min-width: 768px) {
+  .trick-area {
+    --collect-distance: 235px;
+  }
+}
+.trick-card.collecting {
+  --fly-y: var(--collect-distance);
+  animation: collect-set 900ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  z-index: 3;
+  /* The cards travel across the table; they must never swallow a tap meant
+     for a card in hand. */
+  pointer-events: none;
+}
+.trick-card.collecting.won {
+  z-index: 4;
+}
+.trick-card.collecting.to-theirs {
+  --fly-y: calc(-1 * var(--collect-distance));
+}
+.trick-card.collecting .trick-who {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+@keyframes collect-set {
+  0% {
+    transform: translate(-50%, -50%) translate(var(--card-x), var(--card-y))
+      rotateX(0deg);
+    opacity: 1;
+  }
+  42% {
+    transform: translate(-50%, -50%) translate(0, 0) rotateX(24deg)
+      rotateZ(var(--stack-angle)) scale(0.9);
+  }
+  58% {
+    transform: translate(-50%, -50%) translate(0, 0) rotateX(48deg)
+      rotateZ(var(--stack-angle)) scale(0.72);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) translate(0, var(--fly-y)) rotateX(68deg)
+      rotateZ(var(--stack-angle)) scale(0.36);
+    opacity: 0;
+  }
+}
+
+/* With reduced motion the cards simply fade out where they lie: the table
+   still clears, nothing flies. */
+@media (prefers-reduced-motion: reduce) {
+  .trick-card.collecting,
+  .trick-card.collecting.to-theirs {
+    animation: collect-fade 400ms ease forwards;
+  }
+  .counter.collected {
+    animation: none;
+  }
+  @keyframes collect-fade {
+    to {
+      opacity: 0;
+    }
+  }
+}
+
+/* ---- teams in the room lobby ---- */
+.teams-panel .small {
+  font-size: 12px;
+}
+.team-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+.team-column {
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-top-width: 3px;
+  background: rgba(0, 0, 0, 0.18);
+  min-width: 0;
+}
+.team-column.team-0 {
+  border-top-color: #6fb3ff;
+}
+.team-column.team-1 {
+  border-top-color: #ffb36f;
+}
+.team-column h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.team-column ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.team-column li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.seat-number {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.65;
+}
+.seat-player {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seat-move select {
+  width: 100%;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 8px;
+}
+.team-name-fields {
+  display: grid;
+  gap: 8px;
+}
+.team-rename {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+.team-rename .btn-ghost {
+  justify-self: start;
+}
+@media (min-width: 768px) {
+  .team-name-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+}

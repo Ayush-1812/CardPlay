@@ -123,6 +123,10 @@ type Querier interface {
 	RevokeTargetRoomInvitations(ctx context.Context, arg RevokeTargetRoomInvitationsParams) error
 	RevokeUserInvitations(ctx context.Context, inviterID string) error
 	Room(ctx context.Context, id string) (Room, error)
+	// The running match's engine and newest snapshot for a room, so platform
+	// policies that depend on game state (chat during trump selection) can ask
+	// the rules engine inside the caller's transaction.
+	RoomGameState(ctx context.Context, roomID string) (RoomGameStateRow, error)
 	RoomInvitationsByCreator(ctx context.Context, arg RoomInvitationsByCreatorParams) ([]RoomInvitationsByCreatorRow, error)
 	SearchPublicUser(ctx context.Context, arg SearchPublicUserParams) (SearchPublicUserRow, error)
 	SessionUser(ctx context.Context, tokenHash string) (SessionUserRow, error)
@@ -133,6 +137,9 @@ type Querier interface {
 	SetRoomHost(ctx context.Context, arg SetRoomHostParams) error
 	SetRoomStatus(ctx context.Context, arg SetRoomStatusParams) error
 	StaleControllers(ctx context.Context) ([]string, error)
+	// Exchanges two members seats in one statement. The caller defers the seat
+	// uniqueness constraint for the transaction (see migration 000011).
+	SwapSeats(ctx context.Context, arg SwapSeatsParams) error
 	TakeControl(ctx context.Context, arg TakeControlParams) (int64, error)
 	// Records activity at most hourly. A guest's sessions slide forward, so a
 	// guest who keeps playing is never signed out.

@@ -165,6 +165,38 @@ Keep the client on Vercel and put the API elsewhere (Render's free tier, Fly, a 
 
 Things to know before choosing this: a free Render service **sleeps** after about 15 minutes idle, so the first visitor waits roughly a minute and the background sweeps stop meanwhile; and **preview deployments do not work**, because each gets a new URL while the API accepts exactly one origin.
 
+## Releasing and rolling back
+
+A release is one migration step and one roll of the API. The client and the API are versioned together but deploy separately, so order matters.
+
+### Release
+
+1. **Check the build.** `go test ./...`, the browser suite, and `sqlc diff` must be clean. The release checklist is [11-release-checklist.md](11-release-checklist.md).
+2. **Migrate first.** `cardplay migrate` takes an advisory lock, so running it twice or from two machines is safe. Migrations are embedded in the binary and checksummed: a server refuses to report ready if the database is behind or if an applied migration's checksum differs.
+3. **Roll the API.** A restarted instance loses no acknowledged command. Clients reconnect with backoff and resynchronise; matches pause while a seat is away and resume when it returns.
+4. **Deploy the client.** The API address is compiled into it, so a change there needs a rebuild, not a restart.
+5. **Verify.** `/readyz` must return 200 on every instance, then play one hand of each game.
+
+Migrations are written to be safe with the previous version running: new tables and nullable columns only, so a roll is never all-or-nothing.
+
+### Rollback
+
+- **Prefer forward.** `cardplay migrate-down` is disabled when `APP_ENV=production`. The project tests up/down/up in CI, but in production a forward fix or a restore is safer than reversing a migration under traffic.
+- **Reverting code only** (no new migration): redeploy the previous image. Nothing else is needed, because migrations are additive.
+- **Reverting across a migration:** restore the most recent dump into a new database, point the API at it, and roll. Expect to lose anything committed since the dump, including matches in progress.
+- **A bad client build:** redeploy the previous client; it keeps working against the newer API as long as no command kind was removed.
+
+### Backups
+
+The database holds everything, including matches in progress. Take a dump on a schedule and copy it off the machine:
+
+```sh
+pg_dump "$DATABASE_URL" --format=custom > cardplay-$(date +%F).dump
+pg_restore --dbname="$RESTORE_URL" --exit-on-error cardplay-2026-10-03.dump
+```
+
+A backup is only real once a restore has been proven: restore into an empty database, start the API against it, and check `/readyz` and a match's state. The full drill, including a per-table comparison, is in [10-operations.md](10-operations.md).
+
 ## When something is wrong
 
 | Symptom | Cause |

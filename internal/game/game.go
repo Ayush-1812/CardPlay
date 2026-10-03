@@ -91,6 +91,14 @@ type TimeoutPolicy interface {
 	TimeoutMoves(State) ([]TimeoutMove, error)
 }
 
+// ChatPolicy is implemented by games that must close room chat during part
+// of a match, so players cannot pass information the rules hide. The platform
+// asks the running game before accepting a message; a game that does not
+// implement it leaves chat open.
+type ChatPolicy interface {
+	ChatOpen(State) (bool, error)
+}
+
 // CardCatalog is implemented by games whose public card metadata clients need.
 type CardCatalog interface {
 	Cards() any

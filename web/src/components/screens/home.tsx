@@ -14,6 +14,9 @@ export type GameEntry = {
   players: string;
   playable: boolean;
   suit: string;
+  // Seats a room for this game is created with. Omitted means the player
+  // picks, within the limits the server enforces.
+  seats?: number;
 };
 
 export const GAMES: GameEntry[] = [
@@ -36,10 +39,12 @@ export const GAMES: GameEntry[] = [
   {
     id: "trump",
     name: "Trump",
-    blurb: "Trick-taking with a trump suit. Read the table, win the hands.",
-    players: "4 players",
-    playable: false,
+    blurb:
+      "Two teams, a chosen trump suit, thirteen tricks. First to seven wins the round.",
+    players: "4 players · 2 teams",
+    playable: true,
     suit: "♥",
+    seats: 4,
   },
 ];
 

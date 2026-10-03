@@ -87,3 +87,10 @@ WHERE m.id=s.match_id AND m.status IN ('finished','abandoned') AND s.revision < 
 DELETE FROM matches WHERE status IN ('finished','abandoned') AND finished_at < now()-interval '90 days';
 -- name: SetRoomStatus :exec
 UPDATE rooms SET status=$2,revision=revision+1 WHERE id=$1;
+-- name: RoomGameState :one
+-- The running match's engine and newest snapshot for a room, so platform
+-- policies that depend on game state (chat during trump selection) can ask
+-- the rules engine inside the caller's transaction.
+SELECT m.id,m.game_id,m.rules_version,s.schema_version,s.state FROM matches m
+JOIN LATERAL (SELECT gs.schema_version,gs.state FROM game_snapshots gs WHERE gs.match_id=m.id ORDER BY gs.revision DESC LIMIT 1) s ON true
+WHERE m.room_id=$1 AND m.status IN ('playing','paused') ORDER BY m.created_at DESC LIMIT 1;

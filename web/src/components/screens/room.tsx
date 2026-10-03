@@ -7,6 +7,8 @@
 import { ReactNode, useState } from "react";
 import { Friend, RoomView, User } from "../../lib/api";
 
+const DEFAULT_TEAM = ["Team A", "Team B"];
+
 export function RoomScreen({
   user,
   view,
@@ -24,6 +26,7 @@ export function RoomScreen({
   onLeave,
   onClose,
   onUpdate,
+  onSeat,
   onMakeHost,
   onKick,
 }: {
@@ -42,7 +45,8 @@ export function RoomScreen({
   onStart: () => void;
   onLeave: () => void;
   onClose: () => void;
-  onUpdate: (name: string, capacity: number) => void;
+  onUpdate: (name: string, capacity: number, teams?: [string, string]) => void;
+  onSeat: (userID: string, seat: number) => void;
   onMakeHost: (id: string, handle: string) => void;
   onKick: (id: string, handle: string) => void;
 }) {
@@ -60,6 +64,10 @@ export function RoomScreen({
   const waiting = room.status === "waiting";
   const me = view.members.find((m) => m.id === user.id);
   const full = view.members.length >= room.capacity;
+  // Games that pair seats into teams; Trump is the only one so far.
+  const teamGame = room.game_id === "trump";
+  const teamLabel = (team: number) =>
+    (team === 0 ? room.team_a : room.team_b)?.trim() || DEFAULT_TEAM[team];
   const everyoneReady =
     view.members.length >= 2 && view.members.every((m) => m.ready);
   const invitable = friends.filter(
@@ -170,6 +178,94 @@ export function RoomScreen({
         </section>
       )}
 
+      {teamGame && (
+        <section className="panel teams-panel" aria-label="Teams">
+          <h2>Teams</h2>
+          <p className="muted small">
+            Partners sit opposite: seats 1 and 3 are one team, seats 2 and 4 the
+            other.
+            {host && waiting
+              ? " Choose another seat to move or swap a player between teams."
+              : ""}
+          </p>
+          <div className="team-columns">
+            {[0, 1].map((team) => (
+              <div className={`team-column team-${team}`} key={team}>
+                <h3>{teamLabel(team)}</h3>
+                <ul>
+                  {[team, team + 2].map((seat) => {
+                    const member = view.members.find((m) => m.seat === seat);
+                    return (
+                      <li key={seat}>
+                        <span className="seat-number">Seat {seat + 1}</span>
+                        <span className="seat-player">
+                          {member
+                            ? `${member.display_name}${member.id === user.id ? " (you)" : ""}`
+                            : "Empty"}
+                        </span>
+                        {host && waiting && member && (
+                          <label className="seat-move">
+                            <span>Move {member.display_name} to</span>
+                            <select
+                              value={seat}
+                              disabled={busy}
+                              onChange={(e) =>
+                                onSeat(member.id, Number(e.target.value))
+                              }
+                            >
+                              {Array.from({ length: room.capacity }).map(
+                                (_, n) => (
+                                  <option key={n} value={n}>
+                                    Seat {n + 1} · {teamLabel(n % 2)}
+                                  </option>
+                                ),
+                              )}
+                            </select>
+                          </label>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+          {host && waiting && (
+            <form
+              className="team-rename"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const data = new FormData(e.currentTarget);
+                onUpdate(room.name, room.capacity, [
+                  String(data.get("team_a")),
+                  String(data.get("team_b")),
+                ]);
+              }}
+            >
+              <div className="team-name-fields">
+                {[0, 1].map((team) => (
+                  <label className="field" key={team}>
+                    <span>
+                      {team === 0 ? "First team" : "Second team"} name
+                    </span>
+                    <input
+                      name={team === 0 ? "team_a" : "team_b"}
+                      key={`${room.id}:team${team}:${team === 0 ? room.team_a : room.team_b}`}
+                      defaultValue={team === 0 ? room.team_a : room.team_b}
+                      placeholder={DEFAULT_TEAM[team]}
+                      maxLength={24}
+                    />
+                  </label>
+                ))}
+              </div>
+              <button className="btn-ghost" disabled={busy}>
+                Save team names
+              </button>
+            </form>
+          )}
+        </section>
+      )}
+
       <section className="panel" aria-label="Players">
         <h2>
           Players{" "}
@@ -264,6 +360,9 @@ export function RoomScreen({
                   onUpdate(
                     String(data.get("name")),
                     Number(data.get("capacity")),
+                    teamGame
+                      ? [room.team_a ?? "", room.team_b ?? ""]
+                      : undefined,
                   );
                 }}
               >

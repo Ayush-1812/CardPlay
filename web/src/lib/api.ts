@@ -11,6 +11,9 @@ export type Room = {
   id: string;
   host_id: string;
   name: string;
+  game_id: string;
+  team_a: string;
+  team_b: string;
   capacity: number;
   status: string;
   revision: number;
