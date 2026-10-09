@@ -1085,3 +1085,15 @@ footer.sheet-foot {
 .sheet:focus {
   outline: none;
 }
+
+/* Shown while a sleeping server starts up, so the wait reads as progress
+   rather than a failure. */
+.waking-note {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(239, 192, 73, 0.4);
+  background: rgba(239, 192, 73, 0.12);
+  color: var(--cream, #f5ead0);
+  font-size: 13px;
+}
