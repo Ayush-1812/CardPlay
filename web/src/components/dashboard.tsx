@@ -15,6 +15,7 @@ import {
   Room,
   RoomView,
   User,
+  setWakingListener,
 } from "../lib/api";
 import { CardInfo, Cards, MatchState } from "../lib/game";
 import { ChatPanel } from "./chat";
@@ -74,6 +75,10 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // True while the client is waiting for a server that was asleep. A free
+  // host parks the API when nobody has played for a while, and the first
+  // request then waits for it to start.
+  const [waking, setWaking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [roomList, setRooms] = useState<Room[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -259,6 +264,11 @@ export function Dashboard() {
   useEffect(() => {
     matchRef.current = match;
   }, [match]);
+
+  useEffect(() => {
+    setWakingListener(setWaking);
+    return () => setWakingListener(null);
+  }, []);
 
   // Public card metadata for the table (no hidden state).
   useEffect(() => {
@@ -676,6 +686,12 @@ export function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view?.room.id, view?.room.status]);
 
+  const wakingBanner = waking ? (
+    <p className="waking-note" role="status">
+      Starting the server — this takes up to a minute when nobody has played for
+      a while.
+    </p>
+  ) : null;
   const roomMatch = match && match.room_id === selected ? match : null;
   const showTable = !!roomMatch && liveMatch(roomMatch.status);
   const showResult =
@@ -731,6 +747,7 @@ export function Dashboard() {
     ) : null;
   const alertsSection = (
     <>
+      {wakingBanner}
       {error && (
         <div className="alert" role="alert">
           {error}
@@ -766,7 +783,9 @@ export function Dashboard() {
     return (
       <div className="app felt">
         <p className="splash" role="status">
-          Finding your seat…
+          {waking
+            ? "Starting the server — this takes up to a minute when nobody has played for a while."
+            : "Finding your seat…"}
         </p>
       </div>
     );

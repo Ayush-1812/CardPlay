@@ -74,27 +74,76 @@ export class APIError extends Error {
     super(message);
   }
 }
+// A host that sleeps when idle, which free tiers do, needs a cold start of
+// up to a minute. Until it answers, the gateway in front of it returns 502,
+// 503 or 504, or drops the connection. None of those mean the request was
+// handled, so a read can simply be asked again.
+const GATEWAY_ERRORS = new Set([502, 503, 504]);
+const WAKE_BACKOFF_MS = [1000, 2000, 4000, 8000, 12000, 16000];
+
+let onWaking: ((waking: boolean) => void) | null = null;
+
+/** Called while the client is waiting for a sleeping server to answer. */
+export function setWakingListener(fn: ((waking: boolean) => void) | null) {
+  onWaking = fn;
+}
+
+const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
 export async function api<T>(
   path: string,
   method = "GET",
   body?: unknown,
 ): Promise<T> {
   let response: Response;
-  try {
-    response = await fetch(`/api/v1${path}`, {
-      method,
-      credentials: "same-origin",
-      cache: "no-store",
-      headers:
-        body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    throw new APIError(
-      "NETWORK",
-      "Cannot reach CardPlay. Check your connection and try again.",
-      0,
-    );
+  // Only reads are retried. A write may have reached the server even when the
+  // answer did not, so resending one could repeat it.
+  const attempts = method === "GET" ? WAKE_BACKOFF_MS.length : 0;
+  let waking = false;
+  const settle = () => {
+    if (waking) {
+      waking = false;
+      onWaking?.(false);
+    }
+  };
+  for (let attempt = 0; ; attempt++) {
+    try {
+      response = await fetch(`/api/v1${path}`, {
+        method,
+        credentials: "same-origin",
+        cache: "no-store",
+        headers:
+          body === undefined
+            ? undefined
+            : { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch {
+      if (attempt < attempts) {
+        if (!waking) {
+          waking = true;
+          onWaking?.(true);
+        }
+        await sleep(WAKE_BACKOFF_MS[attempt]);
+        continue;
+      }
+      settle();
+      throw new APIError(
+        "NETWORK",
+        "Cannot reach CardPlay. Check your connection and try again.",
+        0,
+      );
+    }
+    if (GATEWAY_ERRORS.has(response.status) && attempt < attempts) {
+      if (!waking) {
+        waking = true;
+        onWaking?.(true);
+      }
+      await sleep(WAKE_BACKOFF_MS[attempt]);
+      continue;
+    }
+    settle();
+    break;
   }
   if (response.status === 204) return undefined as T;
   let data;

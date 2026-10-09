@@ -197,6 +197,29 @@ pg_restore --dbname="$RESTORE_URL" --exit-on-error cardplay-2026-10-03.dump
 
 A backup is only real once a restore has been proven: restore into an empty database, start the API against it, and check `/readyz` and a match's state. The full drill, including a per-table comparison, is in [10-operations.md](10-operations.md).
 
+## A host that sleeps
+
+A free Render service stops after about 15 minutes without traffic. The next
+visitor then waits up to a minute while it starts, and until it answers the
+gateway in front of it returns 502 with `X-Render-Routing: no-deploy`. This is
+the usual reason a site that worked last week looks broken today.
+
+Two defences, both already in the repository:
+
+1. **The client waits it out.** A read that fails with a dropped connection or
+   502, 503 or 504 is retried with backoff for about 40 seconds, and the
+   screen says the server is starting instead of showing an error. Writes are
+   never retried, because one may have been applied even when the answer was
+   lost.
+2. **A scheduled ping keeps it running.** [`.github/workflows/keepalive.yml`](../.github/workflows/keepalive.yml)
+   calls the health endpoint every ten minutes once the repository variable
+   `API_HEALTH_URL` is set, for example `https://cardplay.onrender.com/healthz`.
+
+**Keep exactly one free service in the account.** An always-awake service uses
+about 730 of the 750 free instance-hours a month; a second one exhausts the
+allowance and both are suspended until the month turns over, which looks
+exactly like the sleeping problem but does not fix itself when pinged.
+
 ## When something is wrong
 
 | Symptom | Cause |

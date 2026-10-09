@@ -124,10 +124,10 @@ test.describe.serial("mobile play as guests", () => {
   test("the room is deleted when the last player leaves", async () => {
     const stored = () =>
       withDB(async (c) => Number((await c.query("SELECT count(*) FROM rooms WHERE id=$1", [roomID])).rows[0].count));
-    await phone.page.getByRole("button", { name: "Leave room" }).tap();
+    await phone.page.getByRole("button", { name: "Leave room", exact: true }).tap();
     await expect(phone.page.getByRole("heading", { name: "Choose a game" })).toBeVisible();
     expect(await stored()).toBe(1);
-    await desk.page.getByRole("button", { name: "Leave room" }).click();
+    await desk.page.getByRole("button", { name: "Leave room", exact: true }).click();
     await expect(desk.page.getByRole("heading", { name: "Choose a game" })).toBeVisible();
     expect(await stored()).toBe(0);
     await expect(desk.page.locator(".rejoin-row")).toHaveCount(0);
