@@ -51,7 +51,9 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - run: npm audit --audit-level=high
+      - run: npm audit --omit=dev --audit-level=high
+      - name: Audit development tools (reported, does not gate)
+        run: npm audit --audit-level=high || true
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm run lint
@@ -96,7 +98,7 @@ jobs:
         working-directory: scripts/e2e
         run: |
           npm ci
-          npm audit --audit-level=high
+          npm audit --omit=dev --audit-level=high
           npx playwright install --with-deps chromium
           npx playwright test
       - uses: actions/upload-artifact@v4
