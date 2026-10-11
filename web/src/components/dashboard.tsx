@@ -4,6 +4,7 @@
 // lobby (name, create or join) → the room → the live table. All session,
 // room, chat and match state lives here; screens only render it.
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -19,8 +20,26 @@ import {
 } from "../lib/api";
 import { CardInfo, Cards, MatchState } from "../lib/game";
 import { ChatPanel } from "./chat";
-import { GameTable } from "./game-table";
-import { TrumpTable } from "./trump/trump-table";
+// A table is only rendered once a match is running, and a player uses one
+// game at a time, so neither table belongs in the bundle that serves the
+// entry screen and the lobby. Loading them on demand keeps the first visit
+// small, which is what a phone on a slow connection feels.
+const GameTable = dynamic(
+  () => import("./game-table").then((m) => m.GameTable),
+  { ssr: false, loading: () => <TableLoading /> },
+);
+const TrumpTable = dynamic(
+  () => import("./trump/trump-table").then((m) => m.TrumpTable),
+  { ssr: false, loading: () => <TableLoading /> },
+);
+
+function TableLoading() {
+  return (
+    <p className="splash" role="status">
+      Dealing the cards…
+    </p>
+  );
+}
 import { TrumpMatch } from "../lib/trump";
 import { AccountSheet, FriendsSheet } from "./screens/account";
 import { EntryScreen, VerifyScreen } from "./screens/entry";
@@ -106,7 +125,12 @@ export function Dashboard() {
   >(null);
   const matchRef = useRef<MatchState | null>(null);
   const gameBusyRef = useRef(false);
-  const chatPanel = useRef<HTMLElement>(null);
+  const chatPanel = useRef<HTMLElement | null>(null);
+  const [chatNode, setChatNode] = useState<HTMLElement | null>(null);
+  const holdChatPanel = useCallback((node: HTMLElement | null) => {
+    chatPanel.current = node;
+    setChatNode(node);
+  }, []);
   const chatDraft = useRef<{ body: string; id: string } | null>(null);
   const busyRef = useRef(false);
   const selectedRef = useRef<string | null>(null);
@@ -287,15 +311,14 @@ export function Dashboard() {
   // Unread chat: while the chat panel is off screen, messages after the
   // point it left view count as new.
   useEffect(() => {
-    const panel = chatPanel.current;
-    if (!panel || typeof IntersectionObserver === "undefined") return;
+    if (!chatNode || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) setChatBoundary(lastChatID.current);
       setChatVisible(entry.isIntersecting);
     });
-    observer.observe(panel);
+    observer.observe(chatNode);
     return () => observer.disconnect();
-  }, [selected, view, match?.status]);
+  }, [chatNode]);
 
   useEffect(() => {
     const log = chatLog.current;
@@ -706,7 +729,7 @@ export function Dashboard() {
         messages={chat}
         me={user.id}
         busy={busy}
-        panelRef={chatPanel}
+        panelRef={holdChatPanel}
         logRef={chatLog}
         onSend={async (body) => {
           let sent = false;

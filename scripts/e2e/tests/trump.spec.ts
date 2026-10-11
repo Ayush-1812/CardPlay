@@ -346,7 +346,7 @@ test.describe.serial("trump at a four-seat table", () => {
     await expect(any.page.locator(".trick-empty")).toBeVisible();
     // Each team's won tricks are stacked on its own side.
     await expect(any.page.locator(".counter-pile .trick-set")).toHaveCount(1);
-    await expect(any.page.locator(".counter-pile .pile-card")).toHaveCount(4);
+    await expect(any.page.locator(".counter-pile .trick-card-back")).toHaveCount(4);
     await expect(
       any.page.locator(".tseat-flag", { hasText: "Leads next" }),
     ).toHaveCount(1);
