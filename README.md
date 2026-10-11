@@ -61,7 +61,7 @@ The interface supports desktop and phone layouts, keyboard and tap controls, pri
 | Layer           | Technology                                      | Role                                                      |
 | --------------- | ----------------------------------------------- | --------------------------------------------------------- |
 | Web             | Next.js 16.3.6, React 19.3.0, TypeScript 6, CSS | Responsive interface, same-origin `/api` and `/ws` proxy  |
-| API             | Go 1.27.1, `chi` v5                             | HTTP routes, authentication, rooms, chat, match lifecycle |
+| API             | Go 1.27.2, `chi` v5                             | HTTP routes, authentication, rooms, chat, match lifecycle |
 | Realtime        | `coder/websocket`, PostgreSQL `LISTEN/NOTIFY`   | Live commands, presence, and per-player updates           |
 | Database        | PostgreSQL 18.6, `pgx` v5, `sqlc` 1.31.1        | Durable state, transactions, typed SQL access             |
 | Email           | SMTP; Mailpit locally                           | Verification and password recovery                        |
@@ -155,7 +155,7 @@ The main match tables are `matches` (status and revision), `match_participants` 
 
 ## Development without containerizing the app
 
-Install Go 1.27.1 and Node.js 24.16.0. Start PostgreSQL and Mailpit in Docker, then run the API and web client in separate terminals. The API commands below run from the repository root:
+Install Go 1.27.2 and Node.js 24.16.0. Start PostgreSQL and Mailpit in Docker, then run the API and web client in separate terminals. The API commands below run from the repository root:
 
 ```sh
 node scripts/setup.mjs
