@@ -192,7 +192,7 @@ export function TrumpTable({
         {Array.from({ length: pub.tricks[team] }).map((_, trickIndex) => (
           <span className="trick-set" key={trickIndex}>
             {Array.from({ length: 4 }).map((__, cardIndex) => (
-              <span className="pile-card" key={cardIndex} />
+              <span className="trick-card-back" key={cardIndex} />
             ))}
           </span>
         ))}
