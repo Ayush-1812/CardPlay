@@ -237,8 +237,16 @@ export function Dashboard() {
         if (active) setUser(u);
       })
       .catch((e: unknown) => {
-        if (active && !(e instanceof APIError && e.status === 401))
-          setError("Cannot reach CardPlay. Check that the API is running.");
+        // 401 is the ordinary signed-out answer, not a failure. Anything
+        // else keeps its own message: the client already distinguishes a
+        // service that is starting from one that cannot be reached, and a
+        // player cannot act on advice to go and check a server.
+        if (!active || (e instanceof APIError && e.status === 401)) return;
+        setError(
+          e instanceof APIError
+            ? e.message
+            : "Cannot reach CardPlay. Check your connection and try again.",
+        );
       })
       .finally(() => {
         if (active) setLoading(false);
