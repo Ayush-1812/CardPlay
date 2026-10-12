@@ -64,11 +64,17 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 			next.ServeHTTP(w, r)
 		})
 	})
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) { httpx.JSON(w, 200, map[string]string{"status": "ok"}) })
+	// Liveness. Uptime monitors and load balancers probe with HEAD as often
+	// as with GET, so both answer; net/http drops the body for a HEAD.
+	live := func(w http.ResponseWriter, r *http.Request) {
+		httpx.JSON(w, 200, map[string]string{"status": "ok"})
+	}
+	r.Get("/healthz", live)
+	r.Head("/healthz", live)
 	// Readiness: the database answers, every embedded migration is applied
 	// with its current checksum, and live notifications are being received.
 	// Details stay generic; operators read the logs.
-	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+	ready := func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		checks := map[string]string{"database": "ok", "migrations": "ok", "notifications": "ok"}
@@ -88,7 +94,9 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 			return
 		}
 		httpx.JSON(w, 200, map[string]any{"status": "ready", "checks": checks})
-	})
+	}
+	r.Get("/readyz", ready)
+	r.Head("/readyz", ready)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(auth.Authenticate)
 		// Browser error reports; open to signed-out pages, small and rate limited.

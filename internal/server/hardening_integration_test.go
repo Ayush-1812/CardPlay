@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -177,4 +178,69 @@ func TestSocketHardening(t *testing.T) {
 			t.Fatalf("room lost across shutdown: %d %v", status, view)
 		}
 	})
+}
+
+// TestHealthProbes checks the endpoints an uptime monitor or a load balancer
+// calls. They probe with HEAD as readily as with GET, and a monitor that gets
+// 405 reports the service as down while it is running perfectly well.
+func TestHealthProbes(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set TEST_DATABASE_URL to an isolated PostgreSQL database")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err = db.Migrate(ctx, pool, false); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Parse(func(k string) string {
+		return map[string]string{"DATABASE_URL": dsn, "APP_ORIGIN": "http://localhost:3000", "APP_ENV": "test"}[k]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst := startInstance(t, pool, c)
+	// Readiness needs the listener, which starts with the hub.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(inst.srv.URL + "/readyz")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		for _, method := range []string{"GET", "HEAD"} {
+			t.Run(method+" "+path, func(t *testing.T) {
+				req, err := http.NewRequest(method, inst.srv.URL+path, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// A monitor sends no Origin header; a probe must not need one.
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != 200 {
+					t.Fatalf("%s %s returned %d, want 200", method, path, resp.StatusCode)
+				}
+				body, _ := io.ReadAll(resp.Body)
+				if method == "HEAD" && len(body) != 0 {
+					t.Fatalf("HEAD must carry no body, got %d bytes", len(body))
+				}
+				if method == "GET" && len(body) == 0 {
+					t.Fatal("GET should report the status")
+				}
+			})
+		}
+	}
 }
