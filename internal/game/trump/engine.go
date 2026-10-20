@@ -166,6 +166,7 @@ func (s *State) startRound() []Event {
 	s.Trump = ""
 	s.Trick = nil
 	s.LastTrick = nil
+	s.Won = [2][]Trick{}
 	s.Played = nil
 	s.Tricks = [2]int{}
 	s.Ready = make([]bool, Seats)
@@ -310,9 +311,6 @@ func (s *State) resolveTrick() []Event {
 	winner := s.trickWinner()
 	team := TeamOf(winner)
 	s.Tricks[team]++
-	for _, p := range s.Trick {
-		s.Played = append(s.Played, p.Card)
-	}
 	cards := make([]CardID, 0, Seats)
 	for _, p := range s.Trick {
 		cards = append(cards, p.Card)
@@ -322,7 +320,9 @@ func (s *State) resolveTrick() []Event {
 	}}}
 	// Keep the finished trick on the table until its winner leads again, so
 	// every client can show who took it (stage completed_trick).
-	s.LastTrick = &Trick{Cards: slices.Clone(s.Trick), Lead: s.leadSuit(), Winner: winner, Team: team}
+	won := Trick{Cards: slices.Clone(s.Trick), Lead: s.leadSuit(), Winner: winner, Team: team}
+	s.Won[team] = append(s.Won[team], won)
+	s.LastTrick = &won
 	s.Trick = nil
 	if s.Tricks[team] >= TricksToWin {
 		return append(events, s.endRound(team)...)
@@ -388,6 +388,13 @@ func (s *State) clone() *State {
 		out.LastTrick = &last
 	}
 	out.Played = slices.Clone(s.Played)
+	for team := range s.Won {
+		out.Won[team] = make([]Trick, len(s.Won[team]))
+		for i, trick := range s.Won[team] {
+			out.Won[team][i] = trick
+			out.Won[team][i].Cards = slices.Clone(trick.Cards)
+		}
+	}
 	out.History = slices.Clone(s.History)
 	out.Ready = slices.Clone(s.Ready)
 	return &out
