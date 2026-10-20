@@ -418,3 +418,63 @@ func TestLegalListMatchesEnforcement(t *testing.T) {
 		s = ok(t, s, seat, PlayCard{Card: legal[0]})
 	}
 }
+
+// Owner decision 2026-10-20: a team keeps the tricks it wins and both its
+// players may look back at them; the other team's tricks are not projected.
+func TestWonTricksBelongToTheirTeam(t *testing.T) {
+	s := pickTrump(t, fixture(t, 30), Spades)
+	for i := 0; i < 3 && s.Phase == PhasePlay; i++ {
+		for range Seats {
+			a, _ := s.TimeoutAction(s.Turn)
+			s = ok(t, s, s.Turn, a)
+		}
+	}
+	if s.Tricks[0]+s.Tricks[1] != 3 {
+		t.Fatalf("three tricks should have been played, counts %v", s.Tricks)
+	}
+	for team := range s.Won {
+		if len(s.Won[team]) != s.Tricks[team] {
+			t.Fatalf("team %d counted %d tricks but kept %d", team, s.Tricks[team], len(s.Won[team]))
+		}
+		for _, trick := range s.Won[team] {
+			if len(trick.Cards) != Seats || TeamOf(trick.Winner) != team {
+				t.Fatalf("team %d holds a trick it did not win: %+v", team, trick)
+			}
+		}
+	}
+
+	for seat := range Seats {
+		v := s.ViewFor(seat)
+		mine, theirs := TeamOf(seat), 1-TeamOf(seat)
+		if len(v.Self.Won) != len(s.Won[mine]) {
+			t.Fatalf("seat %d sees %d of its %d tricks", seat, len(v.Self.Won), len(s.Won[mine]))
+		}
+		// Both players of a team see the same tricks, including the ones
+		// their partner took.
+		partner := s.ViewFor(PartnerOf(seat))
+		if len(partner.Self.Won) != len(v.Self.Won) {
+			t.Fatal("partners must see the same won tricks")
+		}
+		// None of the other team's cards appear anywhere in this view.
+		for _, trick := range s.Won[theirs] {
+			for _, p := range trick.Cards {
+				for _, ownTrick := range v.Self.Won {
+					for _, own := range ownTrick.Cards {
+						if own.Card == p.Card {
+							t.Fatalf("seat %d can see the other team's %s", seat, p.Card)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// A new round starts with nothing held.
+	s = playRound(t, s, Spades)
+	for seat := range Seats {
+		s = ok(t, s, seat, ReadyRound{})
+	}
+	if len(s.Won[0]) != 0 || len(s.Won[1]) != 0 {
+		t.Fatalf("won tricks must reset each round: %v %v", len(s.Won[0]), len(s.Won[1]))
+	}
+}
