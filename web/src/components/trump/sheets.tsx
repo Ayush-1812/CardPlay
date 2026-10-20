@@ -15,6 +15,7 @@ import {
   sortHand,
   TrumpPublic,
   TrumpSelf,
+  TrumpTrick,
 } from "../../lib/trump";
 
 // TrumpChoice is shown to whoever may name the suit. Everyone else sees a
@@ -215,6 +216,55 @@ export function RoundOver({
       <p className="sheet-hint" role="status">
         {ready} of 4 ready for the next round.
       </p>
+    </Sheet>
+  );
+}
+
+// WonTricks lets a team look back through the tricks it has taken this
+// round. Only your own team's tricks are ever sent to you, so there is
+// nothing here the other side could learn (owner decision 2026-10-20).
+export function WonTricks({
+  tricks,
+  teamName,
+  name,
+  trump,
+  onClose,
+}: {
+  tricks: TrumpTrick[];
+  teamName: string;
+  name: (seat: number) => string;
+  trump?: Suit;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet
+      label={`Tricks won by ${teamName}`}
+      title={`${teamName}: ${tricks.length} trick${tricks.length === 1 ? "" : "s"}`}
+      onClose={onClose}
+      wide
+    >
+      <p className="sheet-hint">
+        Only your team sees these.
+        {trump ? ` Trump is ${SUIT_NAME[trump]} ${SUIT_SYMBOL[trump]}.` : ""}
+      </p>
+      <ol className="won-list">
+        {tricks.map((won, index) => (
+          <li key={index} className="won-trick">
+            <span className="won-index">#{index + 1}</span>
+            <span className="won-cards">
+              {won.cards.map((play) => (
+                <span
+                  key={play.card}
+                  className={`won-card ${play.seat === won.winner ? "took" : ""}`}
+                >
+                  <TrumpCardFace id={play.card} size="sm" />
+                </span>
+              ))}
+            </span>
+            <span className="won-by">{name(won.winner)} took it</span>
+          </li>
+        ))}
+      </ol>
     </Sheet>
   );
 }
