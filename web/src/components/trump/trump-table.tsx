@@ -20,7 +20,7 @@ import {
   whyIllegal,
 } from "../../lib/trump";
 import { TrumpCardBack, TrumpCardFace } from "./playing-card";
-import { RoundOver, TrumpChoice } from "./sheets";
+import { RoundOver, TrumpChoice, WonTricks } from "./sheets";
 
 type Command = (kind: string, payload: object) => Promise<boolean>;
 
@@ -64,6 +64,8 @@ export function TrumpTable({
   // until the server's state arrives.
   const [pending, setPending] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
+  // Looking back through the tricks this team has taken.
+  const [showWon, setShowWon] = useState(false);
   // The finished trick is shown travelling to its team for a moment, then the
   // table is clear. Which trick has been cleared is state; the cards come
   // from the server, so a state push cannot strand them on the table.
@@ -179,33 +181,46 @@ export function TrumpTable({
   // the bottom, the opponents' at the top.
   const collectSide =
     collecting && collecting.team === self.team ? "mine" : "theirs";
-  const teamPile = (team: number) => (
-    <div
-      className={`counter team-${team} ${self.team === team ? "mine" : "theirs"} ${collecting?.team === team ? "collected" : ""}`}
-      aria-label={`${teamName(team)}: ${pub.tricks[team]} tricks won this round`}
-    >
-      <span className="counter-team">
-        {teamName(team)}
-        {self.team === team ? " · yours" : ""}
-      </span>
-      <span className="counter-pile" aria-hidden="true">
-        {Array.from({ length: pub.tricks[team] }).map((_, trickIndex) => (
-          <span className="trick-set" key={trickIndex}>
-            {Array.from({ length: 4 }).map((__, cardIndex) => (
-              <span className="trick-card-back" key={cardIndex} />
-            ))}
-          </span>
-        ))}
-      </span>
-      <span className="counter-value">
-        {pub.tricks[team]}
-        <span className="counter-of"> / {pub.tricks_to_win} tricks</span>
-      </span>
-      <span className="counter-rounds">
-        {pub.rounds_won[team]} round{pub.rounds_won[team] === 1 ? "" : "s"} won
-      </span>
-    </div>
-  );
+  const teamPile = (team: number) => {
+    const mine = self.team === team;
+    const canOpen = mine && pub.tricks[team] > 0;
+    const Tag = canOpen ? "button" : "div";
+    return (
+      <Tag
+        type={canOpen ? "button" : undefined}
+        className={`counter team-${team} ${mine ? "mine" : "theirs"} ${collecting?.team === team ? "collected" : ""} ${canOpen ? "openable" : ""}`}
+        aria-label={
+          canOpen
+            ? `${teamName(team)}: ${pub.tricks[team]} tricks won this round. Look through them`
+            : `${teamName(team)}: ${pub.tricks[team]} tricks won this round`
+        }
+        onClick={canOpen ? () => setShowWon(true) : undefined}
+      >
+        <span className="counter-team">
+          {teamName(team)}
+          {self.team === team ? " · yours" : ""}
+        </span>
+        <span className="counter-pile" aria-hidden="true">
+          {Array.from({ length: pub.tricks[team] }).map((_, trickIndex) => (
+            <span className="trick-set" key={trickIndex}>
+              {Array.from({ length: 4 }).map((__, cardIndex) => (
+                <span className="trick-card-back" key={cardIndex} />
+              ))}
+            </span>
+          ))}
+        </span>
+        <span className="counter-value">
+          {pub.tricks[team]}
+          <span className="counter-of"> / {pub.tricks_to_win} tricks</span>
+        </span>
+        <span className="counter-rounds">
+          {canOpen ? "Tap to review · " : ""}
+          {pub.rounds_won[team]} round{pub.rounds_won[team] === 1 ? "" : "s"}{" "}
+          won
+        </span>
+      </Tag>
+    );
+  };
   const positionOf = (seat: number) =>
     seat === ring.bottom
       ? "bottom"
@@ -430,6 +445,15 @@ export function TrumpTable({
           busy={busy || offline}
           onChoose={(suit) => void onCommand("choose_trump", { suit })}
           onDelegate={() => void onCommand("delegate_trump", {})}
+        />
+      )}
+      {showWon && (
+        <WonTricks
+          tricks={self.won}
+          teamName={teamName(self.team)}
+          name={nameOf}
+          trump={pub.trump}
+          onClose={() => setShowWon(false)}
         />
       )}
       {playing && pub.phase === "round_over" && !collecting && (
