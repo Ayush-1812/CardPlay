@@ -835,3 +835,57 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ---- looking back through the tricks your team has won ---- */
+.counter.openable {
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+.counter.openable:focus-visible {
+  outline: 3px solid var(--accent, #efc049);
+  outline-offset: 2px;
+}
+.won-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 60dvh;
+  overflow-y: auto;
+}
+.won-trick {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "index cards"
+    "index by";
+  align-items: center;
+  gap: 2px 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.won-index {
+  grid-area: index;
+  font-size: 11px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.won-cards {
+  grid-area: cards;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.won-card.took .tcard {
+  outline: 2px solid var(--accent, #efc049);
+  outline-offset: 1px;
+}
+.won-by {
+  grid-area: by;
+  font-size: 11px;
+  opacity: 0.7;
+}
