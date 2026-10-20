@@ -638,10 +638,10 @@ func DeleteAccount(ctx context.Context, q *store.Queries, userID string) error {
 		}
 		if n == 0 {
 			err = q.DeleteRoom(ctx, roomID)
-		} else if err = q.ResetReady(ctx, roomID); err == nil {
-			if err = q.BumpRoom(ctx, roomID); err == nil {
-				err = q.Enqueue(ctx, store.EnqueueParams{RoomID: roomID, Kind: "room.updated", Payload: []byte(`{}`)})
-			}
+		} else if err = q.BumpRoom(ctx, roomID); err == nil {
+			// The others keep whatever readiness they had: this player
+			// leaving is not a reason to withdraw their consent.
+			err = q.Enqueue(ctx, store.EnqueueParams{RoomID: roomID, Kind: "room.updated", Payload: []byte(`{}`)})
 		}
 		if err != nil {
 			return err
