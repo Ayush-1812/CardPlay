@@ -169,9 +169,6 @@ func (m *Module) Kick(w http.ResponseWriter, r *http.Request) {
 		err = q.RevokeTargetRoomInvitations(r.Context(), store.RevokeTargetRoomInvitationsParams{RoomID: id, TargetID: target})
 	}
 	if err == nil {
-		err = q.ResetReady(r.Context(), id)
-	}
-	if err == nil {
 		err = changed(r.Context(), q, id)
 	}
 	if err == nil {
@@ -293,9 +290,7 @@ func (m *Module) Leave(w http.ResponseWriter, r *http.Request) {
 	if err == nil && remaining == 0 {
 		err = q.DeleteRoom(r.Context(), id)
 	} else if err == nil {
-		if err = q.ResetReady(r.Context(), id); err == nil {
-			err = changed(r.Context(), q, id)
-		}
+		err = changed(r.Context(), q, id)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -400,11 +395,6 @@ func (m *Module) Seat(w http.ResponseWriter, r *http.Request) {
 			httpx.DBError(w, r, err)
 			return
 		}
-	}
-	// Changing the table clears readiness: everyone confirms the new seating.
-	if err = q.ResetReady(r.Context(), roomID); err != nil {
-		httpx.DBError(w, r, err)
-		return
 	}
 	if err = changed(r.Context(), q, roomID); err != nil {
 		httpx.DBError(w, r, err)
