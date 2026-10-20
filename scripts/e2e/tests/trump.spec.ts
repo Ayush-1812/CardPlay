@@ -11,7 +11,15 @@ test.describe.serial("trump at a four-seat table", () => {
   const pub = (p: Player) => latestState(p).view.public;
   const self = (p: Player) => latestState(p).view.self;
   const seatOf = (p: Player) => self(p).seat;
-  const byTurn = () => players.find((p) => seatOf(p) === pub(players[0]).turn)!;
+  // Whose turn it is, read once every client has caught up to the same
+  // revision: a single stream can lag a step behind and name a stale seat.
+  const onTurn = async () => {
+    await expect
+      .poll(() => new Set(players.map((p) => latestState(p).revision)).size)
+      .toBe(1);
+    const turn = pub(players[0]).turn;
+    return players.find((p) => seatOf(p) === turn)!;
+  };
 
   test.beforeAll(async ({ browser }) => {
     for (const name of ["ava", "ben", "cara", "dan"]) {
@@ -232,7 +240,7 @@ test.describe.serial("trump at a four-seat table", () => {
   });
 
   test("legal cards are highlighted and illegal ones explain themselves", async () => {
-    const turn = byTurn();
+    const turn = await onTurn();
     await expect(turn.page.locator(".hand-card-btn")).toHaveCount(13);
     await expect(turn.page.locator(".hand-status")).toContainText("Your turn");
     // On a lead every card is legal.
@@ -307,9 +315,11 @@ test.describe.serial("trump at a four-seat table", () => {
   });
 
   test("a trick plays out and the winner is shown", async () => {
-    const leader = byTurn();
+    const leader = await onTurn();
     const before = latestState(leader).revision;
-    await leader.page.locator(".hand-card-btn.legal").first().click();
+    const leadCard = leader.page.locator(".hand-card-btn.legal").first();
+    await expect(leadCard).toBeEnabled();
+    await leadCard.click();
     await expect
       .poll(() => latestState(leader).revision)
       .toBeGreaterThan(before);
@@ -322,7 +332,7 @@ test.describe.serial("trump at a four-seat table", () => {
     // A player holding the lead suit must follow it: those cards are legal
     // and the others explain why they are not.
     for (let i = 0; i < 3; i++) {
-      const turn = byTurn();
+      const turn = await onTurn();
       const illegal = turn.page.locator(".hand-card-btn.illegal").first();
       if (await illegal.count()) {
         await expect(illegal).toHaveAttribute(
@@ -331,7 +341,9 @@ test.describe.serial("trump at a four-seat table", () => {
         );
       }
       const rev = latestState(turn).revision;
-      await turn.page.locator(".hand-card-btn.legal").first().click();
+      const card = turn.page.locator(".hand-card-btn.legal").first();
+      await expect(card).toBeEnabled();
+      await card.click();
       await expect.poll(() => latestState(turn).revision).toBeGreaterThan(rev);
     }
     // The four cards are collected towards the team that won them, then the
@@ -346,7 +358,9 @@ test.describe.serial("trump at a four-seat table", () => {
     await expect(any.page.locator(".trick-empty")).toBeVisible();
     // Each team's won tricks are stacked on its own side.
     await expect(any.page.locator(".counter-pile .trick-set")).toHaveCount(1);
-    await expect(any.page.locator(".counter-pile .trick-card-back")).toHaveCount(4);
+    await expect(
+      any.page.locator(".counter-pile .trick-card-back"),
+    ).toHaveCount(4);
     await expect(
       any.page.locator(".tseat-flag", { hasText: "Leads next" }),
     ).toHaveCount(1);
@@ -358,9 +372,11 @@ test.describe.serial("trump at a four-seat table", () => {
   test("the round runs to seven tricks and the winners choose next", async () => {
     // Play on, lowest legal card each time, until a team reaches seven.
     for (let card = 0; card < 52 && pub(players[0]).phase === "play"; card++) {
-      const turn = byTurn();
+      const turn = await onTurn();
       const rev = latestState(turn).revision;
-      await turn.page.locator(".hand-card-btn.legal").first().click();
+      const card = turn.page.locator(".hand-card-btn.legal").first();
+      await expect(card).toBeEnabled();
+      await card.click();
       await expect.poll(() => latestState(turn).revision).toBeGreaterThan(rev);
     }
     const final = pub(players[0]);
@@ -382,11 +398,15 @@ test.describe.serial("trump at a four-seat table", () => {
     // Ready up: the round restarts only when all four are ready.
     let revision = latestState(players[0]).revision;
     for (const p of players.slice(0, 3)) {
-      await expect.poll(() => latestState(p).revision).toBeGreaterThanOrEqual(revision);
+      await expect
+        .poll(() => latestState(p).revision)
+        .toBeGreaterThanOrEqual(revision);
       await p.page
         .getByRole("button", { name: /Ready for next round/ })
         .click();
-      await expect.poll(() => latestState(p).revision).toBeGreaterThan(revision);
+      await expect
+        .poll(() => latestState(p).revision)
+        .toBeGreaterThan(revision);
       revision = latestState(p).revision;
     }
     expect(pub(players[0]).round).toBe(1);
@@ -457,5 +477,146 @@ test.describe.serial("trump at a four-seat table", () => {
   test("no page errors anywhere", async () => {
     for (const p of players)
       expect(p.errors, `${p.name} page errors`).toEqual([]);
+  });
+});
+
+// Owner decision 2026-10-20: a team may look back through the tricks it has
+// taken, and only that team sees them.
+test.describe.serial("tricks a team has won", () => {
+  const seats: Player[] = [];
+  let link: string;
+  const pub = (p: Player) => latestState(p).view.public;
+  const self = (p: Player) => latestState(p).view.self;
+
+  test.beforeAll(async ({ browser }) => {
+    for (const name of ["won1", "won2", "won3", "won4"]) {
+      seats.push(
+        await newPlayer(browser, name, {
+          viewport: { width: 1280, height: 900 },
+        }),
+      );
+    }
+  });
+  test.afterAll(async () => {
+    for (const p of seats) await p?.context.close();
+  });
+
+  test("four players start a round and play one trick", async () => {
+    const host = seats[0];
+    await playAsGuest(host);
+    await host.page.getByRole("button", { name: /Trump/ }).click();
+    await host.page.getByRole("button", { name: "Create room" }).click();
+    await host.page
+      .locator(".room-head .pill")
+      .getByText("Connected")
+      .waitFor();
+    link = await host.page.getByLabel("Invite link").inputValue();
+    for (const p of seats.slice(1)) {
+      await p.page.goto(link);
+      await p.page.getByLabel("Your name").fill(p.name);
+      await p.page.getByRole("button", { name: "Join as guest" }).click();
+      await expect(p.page.locator(".room-head .pill")).toHaveText("Connected");
+    }
+    for (const p of seats)
+      await p.page.getByRole("button", { name: "I'm ready" }).click();
+    await host.page.getByRole("button", { name: "Start match" }).click();
+    for (const p of seats)
+      await expect(p.page.locator(".trump-table")).toBeVisible();
+
+    const entitled = pub(seats[0]).entitled_team;
+    const chooser = seats.find((p) => self(p).seat % 2 === entitled)!;
+    await chooser.page.getByRole("button", { name: /Hearts/ }).click();
+    await expect.poll(() => self(chooser).hand.length).toBe(13);
+    for (let i = 0; i < 4; i++) {
+      const turn = seats.find((p) => self(p).seat === pub(seats[0]).turn)!;
+      const before = latestState(turn).revision;
+      const card = turn.page.locator(".hand-card-btn.legal").first();
+      await expect(card).toBeEnabled();
+      await card.click();
+      await expect
+        .poll(() => latestState(turn).revision)
+        .toBeGreaterThan(before);
+    }
+    await expect
+      .poll(() => pub(seats[0]).tricks[0] + pub(seats[0]).tricks[1])
+      .toBe(1);
+  });
+
+  test("the winning team can look through its trick; the other team cannot", async () => {
+    const winners = pub(seats[0]).last_trick!.team;
+    const onWinning = seats.filter((p) => self(p).team === winners);
+    const onLosing = seats.filter((p) => self(p).team !== winners);
+
+    // Both players of the winning team hold the trick, including the partner
+    // who did not take it.
+    for (const p of onWinning) {
+      expect(self(p).won, `${p.name} should hold the trick`).toHaveLength(1);
+      expect(self(p).won[0].cards).toHaveLength(4);
+    }
+    // The other team is sent nothing, and its pile does not open.
+    for (const p of onLosing) {
+      expect(self(p).won, `${p.name} must not receive it`).toHaveLength(0);
+      await expect(p.page.locator(".counter.theirs.openable")).toHaveCount(0);
+    }
+
+    // The cards are not in the losing side's state at all.
+    const cards = onWinning[0].page
+      ? pub(seats[0]).last_trick!.cards.map((c) => c.card)
+      : [];
+    for (const p of onLosing) {
+      const blob = JSON.stringify(latestState(p).view.self);
+      for (const card of cards) expect(blob).not.toContain(card);
+    }
+
+    // A winner opens the pile and sees the four cards with the taker marked.
+    const viewer = onWinning[0];
+    await viewer.page.locator(".counter.mine.openable").click();
+    const sheet = viewer.page.getByRole("dialog", { name: /Tricks won by/ });
+    await expect(sheet).toBeVisible();
+    await expect(sheet.locator(".won-trick")).toHaveCount(1);
+    await expect(sheet.locator(".won-trick .tcard")).toHaveCount(4);
+    await expect(sheet.locator(".won-card.took")).toHaveCount(1);
+    await expect(sheet).toContainText("Only your team sees these");
+    await viewer.page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+  });
+
+  test("readiness survives another player being removed", async () => {
+    // Back to the lobby: one player leaves the match, which ends it.
+    const leaver = seats[3];
+    leaver.page.once("dialog", (d) => void d.accept());
+    await leaver.page.getByRole("button", { name: "Leave match" }).click();
+    for (const p of seats) {
+      await expect(
+        p.page.getByRole("button", { name: "I'm ready" }),
+      ).toBeVisible();
+    }
+
+    // One player says they are ready.
+    const staying = seats[1];
+    const seatRow = (p: Player, name: string) =>
+      p.page.locator(".seat").filter({ hasText: name });
+    await staying.page.getByRole("button", { name: "I'm ready" }).click();
+    await expect(
+      seatRow(staying, staying.name).getByText("Ready", { exact: true }),
+    ).toBeVisible();
+
+    // The host removes somebody else.
+    const host = seats[0];
+    host.page.once("dialog", (d) => void d.accept());
+    await seatRow(host, leaver.name)
+      .getByRole("button", { name: "Remove" })
+      .click();
+    await expect(seatRow(host, leaver.name)).toHaveCount(0);
+
+    // The player who was ready stays ready, and still is after a refresh.
+    await expect(
+      seatRow(staying, staying.name).getByText("Ready", { exact: true }),
+    ).toBeVisible();
+    await staying.page.reload();
+    await expect(
+      seatRow(staying, staying.name).getByText("Ready", { exact: true }),
+    ).toBeVisible();
+    expect(staying.errors).toEqual([]);
   });
 });
