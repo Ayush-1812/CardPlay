@@ -84,9 +84,15 @@ type State struct {
 	Turn   int    `json:"turn"`
 	Trick  []Play `json:"trick"`
 	// LastTrick is the previous completed trick, or nil at the start of a
-	// round. It is display state: its cards are counted in Played.
-	LastTrick *Trick   `json:"last_trick,omitempty"`
-	Played    []CardID `json:"played"`
+	// round. It is display state: a copy of the trick kept in Won.
+	LastTrick *Trick `json:"last_trick,omitempty"`
+	// Won holds the finished tricks each team has taken this round, in the
+	// order they were won. A team may look back through its own; nobody sees
+	// the other team's (owner decision 2026-10-20).
+	Won [2][]Trick `json:"won"`
+	// Played holds cards no team won: the hands left over when a round ends
+	// at seven tricks. Conservation counts these and Won, never both.
+	Played []CardID `json:"played"`
 
 	Tricks    [2]int        `json:"tricks"`
 	RoundsWon [2]int        `json:"rounds_won"`
@@ -173,12 +179,25 @@ func (s *State) CheckInvariants() error {
 		seen[id]++
 		count++
 	}
+	for team := range s.Won {
+		for _, trick := range s.Won[team] {
+			for _, p := range trick.Cards {
+				seen[p.Card]++
+				count++
+			}
+		}
+	}
 	if count != 52 {
 		return fmt.Errorf("%d cards accounted for, want 52", count)
 	}
 	for id, n := range seen {
 		if n != 1 {
 			return fmt.Errorf("card %s appears %d times", id, n)
+		}
+	}
+	for team := range s.Won {
+		if len(s.Won[team]) != s.Tricks[team] {
+			return fmt.Errorf("team %d won %d tricks but kept %d", team, s.Tricks[team], len(s.Won[team]))
 		}
 	}
 	if len(s.Trick) > Seats {
