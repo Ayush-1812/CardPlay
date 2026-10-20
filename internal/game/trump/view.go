@@ -42,6 +42,10 @@ type SelfView struct {
 	// Legal lists the cards playable right now, so the client can dim the
 	// rest rather than guess the follow-suit rule.
 	Legal []CardID `json:"legal"`
+	// Won lists the tricks this player's own team has taken this round, so
+	// the two of them can look back at what they hold. The other team's
+	// tricks are never projected to them.
+	Won []Trick `json:"won"`
 	// MayChoose is true while this player may name the trump, MayDelegate
 	// while they may still pass that decision to their teammate.
 	MayChoose   bool `json:"may_choose"`
@@ -77,6 +81,10 @@ func (s *State) ViewFor(seat int) View {
 	}
 
 	self := SelfView{Seat: seat, Team: TeamOf(seat), Hand: slices.Clone(s.Players[seat].Hand), Legal: []CardID{}}
+	self.Won = slices.Clone(s.Won[TeamOf(seat)])
+	if self.Won == nil {
+		self.Won = []Trick{}
+	}
 	if self.Hand == nil {
 		self.Hand = []CardID{}
 	}
