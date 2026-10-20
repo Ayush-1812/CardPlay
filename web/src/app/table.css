@@ -100,7 +100,8 @@
   min-width: 0;
 }
 .table-home {
-  padding: 0;
+  min-height: 40px;
+  padding: 0 4px;
   background: none;
   color: inherit;
   font: inherit;
@@ -858,9 +859,23 @@ button.crest:hover {
   padding: 20px 14px 10px;
   scrollbar-width: thin;
 }
+/* A short screen gets less lift above the cards and less padding below. */
+@media (max-height: 620px) {
+  .hand-rail {
+    padding: 12px 12px 8px;
+  }
+  .hand-dock .hand-rail {
+    padding-top: 12px;
+  }
+  .dock-bar {
+    padding: 5px 10px 0;
+  }
+}
 .hand-rail .hand-card {
   flex: none;
-  margin-left: -30px;
+  /* The overlap is a share of the card, not a fixed 30px, so the fan still
+     reads when the cards shrink on a short screen. */
+  margin-left: calc(var(--hand-card-w, 96px) * -0.31);
 }
 .hand-rail .hand-card:first-child {
   margin-left: 0;
@@ -1177,8 +1192,8 @@ button.crest:hover {
   top: 8px;
   right: 10px;
   z-index: 2;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.35);
   color: var(--cream);
@@ -1261,6 +1276,7 @@ button.crest:hover {
   left: 12px;
   right: auto;
   width: auto;
+  min-height: 40px;
   padding: 0 14px;
   font-family: var(--font-ui);
   font-size: 14px;
@@ -1468,4 +1484,40 @@ button.crest:hover {
 }
 .dock-bar .platter-actions {
   margin-left: auto;
+}
+
+/* ---- short screens --------------------------------------------------
+   A phone held sideways has about 390px of height. The chrome above the
+   board gives up padding so the properties, the piles and the hand all
+   keep a share of it. */
+@media (max-height: 620px) {
+  .table-top {
+    height: 44px;
+    padding: 0 14px;
+  }
+  .game-status {
+    margin: 0 12px 4px;
+    padding: 4px 14px;
+  }
+  .game-status strong {
+    font-size: 13px;
+  }
+  .opp-rail {
+    padding: 0 14px 6px;
+  }
+  .crest {
+    padding: 4px 8px;
+  }
+  .panel-caption {
+    margin-bottom: 4px;
+  }
+  .table-alerts {
+    padding: 0 12px;
+  }
+  .hand-empty {
+    padding: 18px;
+  }
+  .dialog {
+    max-height: 94dvh;
+  }
 }

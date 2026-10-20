@@ -480,7 +480,10 @@ input::placeholder {
 .text-button {
   background: none;
   color: var(--green);
-  padding: 6px;
+  /* A finger has to be able to find these: 40px is the floor for anything
+     tappable, however small the label. */
+  min-height: 40px;
+  padding: 6px 8px;
   font-size: 12px;
 }
 .friend-row {

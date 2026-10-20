@@ -6,6 +6,7 @@
 
 import { ReactNode, useState } from "react";
 import { Friend, RoomView, User } from "../../lib/api";
+import { GAMES } from "./home";
 
 const DEFAULT_TEAM = ["Team A", "Team B"];
 
@@ -103,7 +104,10 @@ export function RoomScreen({
       </button>
       <div className="room-head">
         <div>
-          <p className="eyebrow">Monopoly Deal · private room</p>
+          <p className="eyebrow">
+            {GAMES.find((g) => g.id === room.game_id)?.name ?? "Card game"} ·
+            private room
+          </p>
           <h1>{room.name}</h1>
         </div>
         <span className={`pill ${connection === "Connected" ? "ok" : ""}`}>

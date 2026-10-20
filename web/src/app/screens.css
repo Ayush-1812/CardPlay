@@ -64,6 +64,8 @@
 .btn-ghost.small,
 .btn-gold.small,
 .btn-danger.small {
+  /* Small is about the label, not the target: a finger still needs 36px. */
+  min-height: 36px;
   padding: 7px 11px;
   font-size: 12px;
 }
@@ -71,6 +73,9 @@
   display: flex;
   align-items: center;
   gap: 7px;
+  /* Without min-width:0 the name cannot shrink, and a long one pushes the
+     chip past the right edge of a narrow phone. */
+  min-width: 0;
   max-width: 46vw;
   padding: 4px 10px 4px 4px;
   border-radius: 999px;
@@ -79,6 +84,7 @@
   box-shadow: inset 0 0 0 1px rgba(245, 234, 208, 0.1);
 }
 .user-chip-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

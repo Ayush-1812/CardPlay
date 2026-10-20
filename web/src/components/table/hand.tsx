@@ -29,6 +29,10 @@ export function Hand({
   const rail = useRef<HTMLDivElement>(null);
   const [railWidth, setRailWidth] = useState(640);
   const [hovered, setHovered] = useState<number | null>(null);
+  // The docked rail scales with the height of the screen. A tall phone keeps
+  // full-size cards; one held sideways gets smaller ones, so the dock cannot
+  // swallow the table above it.
+  const [railCard, setRailCard] = useState(96);
 
   useEffect(() => {
     const el = rail.current;
@@ -38,6 +42,20 @@ export function Hand({
     );
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const measure = () =>
+      setRailCard(
+        Math.round(Math.max(56, Math.min(96, window.innerHeight * 0.13))),
+      );
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("orientationchange", measure);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("orientationchange", measure);
+    };
   }, []);
 
   const button = (
@@ -84,8 +102,16 @@ export function Hand({
 
   if (layout === "rail") {
     return (
-      <div className="hand-rail" ref={rail} role="group" aria-label="Your hand">
-        {ids.map((id) => button(id, 96))}
+      <div
+        className="hand-rail"
+        ref={rail}
+        role="group"
+        aria-label="Your hand"
+        // The overlap follows the card size, so a smaller card still shows
+        // its left edge and stays tappable.
+        style={{ ["--hand-card-w" as string]: `${railCard}px` }}
+      >
+        {ids.map((id) => button(id, railCard))}
       </div>
     );
   }

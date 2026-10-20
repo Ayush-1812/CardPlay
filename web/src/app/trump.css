@@ -9,17 +9,44 @@
   --line: rgba(239, 192, 73, 0.22);
   --team-a: #6fb3ff;
   --team-b: #ffb36f;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 100dvh;
-  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  /* Three bands: the bar, the table, and a dock holding the hand and the
+     controls. The page itself never scrolls, so the hand stays reachable on
+     a 320px phone and on a 390px-tall phone held sideways. */
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  padding: max(8px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    calc(8px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   background: radial-gradient(
     120% 80% at 50% 0%,
     var(--felt) 0%,
     var(--felt-dark) 100%
   );
   color: var(--cream, #f3ead6);
+}
+/* The table scrolls here when a screen is too short to hold all of it;
+   on anything roomier nothing scrolls at all. */
+.trump-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.trump-body > * {
+  flex: 0 0 auto;
+}
+.trump-dock {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 
 /* ---- top bar ---- */
@@ -32,7 +59,10 @@
 .trump-bar h1 {
   margin: 0;
   font-size: 18px;
-  line-height: 1.2;
+  /* The global h1 tracks -2px, which is meant for a 48px hero; at 18px it
+     runs the words together. */
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 .trump-round {
   margin: 2px 0 0;
@@ -197,6 +227,9 @@
 /* ---- felt and trick ---- */
 .trump-felt {
   position: relative;
+  /* Takes the space that is left, but never less than the seats and the
+     trick need: below that the body scrolls instead. */
+  flex: 1 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
   grid-template-areas:
@@ -219,9 +252,9 @@
 .trick-area {
   grid-area: trick;
   position: relative;
-  --trick-spread-x: 38px;
-  --trick-spread-y: 37px;
-  min-height: 168px;
+  --trick-spread-x: clamp(26px, 7vmin, 38px);
+  --trick-spread-y: clamp(24px, 6.8vmin, 37px);
+  min-height: clamp(104px, 19vh, 168px);
   border-radius: 16px;
   border: 1px dashed var(--line);
   background: rgba(0, 0, 0, 0.16);
@@ -289,8 +322,14 @@
 
 /* ---- cards ---- */
 .tcard {
+  /* --cw drives the frame, the corner and the pip together, so a card can
+     shrink on a short screen and still read. */
+  --cw: 46px;
   position: relative;
   display: inline-grid;
+  width: var(--cw);
+  height: calc(var(--cw) * 1.39);
+  font-size: calc(var(--cw) / 4);
   background: #fbf7ec;
   color: #15181d;
   border-radius: 7px;
@@ -300,50 +339,36 @@
   overflow: hidden;
 }
 .tcard-sm {
-  width: 26px;
-  height: 36px;
+  --cw: 26px;
 }
 .tcard-md {
-  width: 46px;
-  height: 64px;
+  --cw: clamp(34px, 8.5vmin, 46px);
 }
 .tcard-lg {
-  width: 56px;
-  height: 78px;
+  --cw: clamp(38px, 10.5vmin, 56px);
 }
 .tcard-corner {
   position: absolute;
-  top: 3px;
-  left: 4px;
+  top: 0.22em;
+  left: 0.3em;
   display: grid;
   line-height: 1;
   font-weight: 800;
+  font-size: 1.1em;
 }
 .tcard-sm .tcard-corner {
-  font-size: 10px;
-}
-.tcard-md .tcard-corner {
-  font-size: 13px;
-}
-.tcard-lg .tcard-corner {
-  font-size: 15px;
+  font-size: 1.5em;
 }
 .tcard-suit {
   font-size: 0.85em;
 }
 .tcard-pip {
   place-self: center;
-  font-size: 22px;
+  font-size: 2em;
   line-height: 1;
 }
-.tcard-md .tcard-pip {
-  font-size: 24px;
-}
-.tcard-lg .tcard-pip {
-  font-size: 28px;
-}
 .tcard-sm .tcard-pip {
-  font-size: 15px;
+  font-size: 2.3em;
 }
 /* Colour is decoration: the symbol and the written name carry the suit. */
 .suit-hearts,
@@ -551,22 +576,18 @@
     gap: 14px;
   }
   .trick-area {
-    min-height: 300px;
-    --trick-spread-x: 108px;
-    --trick-spread-y: 95px;
+    min-height: clamp(160px, 30vh, 300px);
+    --trick-spread-x: clamp(58px, 11vmin, 108px);
+    --trick-spread-y: clamp(50px, 9.5vmin, 95px);
   }
   .tcard-lg {
-    width: 72px;
-    height: 100px;
+    --cw: clamp(48px, 7.5vmin, 72px);
   }
   .tcard-md {
-    width: 60px;
-    height: 84px;
+    --cw: clamp(42px, 6.3vmin, 60px);
   }
   .trump-hand-rail {
-    justify-content: center;
-    flex-wrap: wrap;
-    overflow-x: visible;
+    justify-content: safe center;
   }
   .suit-grid {
     grid-template-columns: repeat(4, 1fr);
@@ -888,4 +909,169 @@
   grid-area: by;
   font-size: 11px;
   opacity: 0.7;
+}
+
+/* ---- short screens -------------------------------------------------
+   A phone held sideways has about 390px of height for everything. The
+   table gives up decoration first: the round line, the rounds-won line
+   and some padding. Nothing the game needs is removed, and the hand and
+   the controls stay in the dock where they can always be reached. */
+@media (max-height: 620px) {
+  /* The sheets compact too, so the choice and the buttons under it are on
+     screen together rather than one scroll apart. */
+  .sheet-toss {
+    margin-bottom: 6px;
+    padding: 8px 10px;
+  }
+  .sheet-toss-team {
+    font-size: 19px;
+  }
+  .trump-hand {
+    margin: 4px 0;
+  }
+  .suit-choice {
+    min-height: 56px;
+    padding: 7px 6px;
+  }
+  .suit-mark {
+    font-size: 21px;
+  }
+  .suit-grid {
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .round-score {
+    margin: 4px 0 8px;
+  }
+  .score-tricks {
+    font-size: 24px;
+  }
+  .trump-table {
+    gap: 6px;
+  }
+  .trump-bar h1 {
+    font-size: 15px;
+  }
+  .trump-round {
+    display: none;
+  }
+  .trump-indicator {
+    font-size: 14px;
+    padding: 4px 8px;
+  }
+  .toss-banner {
+    padding: 5px 9px;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+  .counter {
+    padding: 5px 9px;
+  }
+  .counter-value {
+    font-size: 18px;
+  }
+  .counter-rounds {
+    display: none;
+  }
+  .counter-pile {
+    min-height: 0;
+  }
+  .tseat {
+    padding: 5px 8px;
+  }
+  .tseat-meta {
+    margin-top: 1px;
+  }
+  .trick-area {
+    min-height: clamp(84px, 24vh, 150px);
+    --collect-distance: 110px;
+  }
+  .trump-felt {
+    padding: 2px 0;
+  }
+  .hand-status {
+    font-size: 11px;
+  }
+  .trump-hand-rail {
+    padding: 2px 0 4px;
+  }
+}
+
+/* ---- touch targets -------------------------------------------------
+   Anything a finger has to find is at least 40px tall, whatever the
+   screen. Cards are exempt: they overlap in a rail by design and each
+   one already reserves 44px. */
+.trump-actions button,
+.trump-table .chat-close {
+  min-height: 40px;
+}
+.trump-table .chat-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.3);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+.trump-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding: max(10px, env(safe-area-inset-top)) 10px
+    calc(10px + env(safe-area-inset-bottom));
+}
+
+/* ---- a phone held sideways ------------------------------------------
+   About 390px of height, and width to spare. The table keeps the left,
+   the hand and the controls move to a column on the right, where the
+   cards wrap instead of scrolling. */
+@media (orientation: landscape) and (max-height: 560px) {
+  .trump-table {
+    grid-template-columns: minmax(0, 1fr) clamp(190px, 32%, 300px);
+    grid-template-rows: auto minmax(0, 1fr);
+    column-gap: 10px;
+  }
+  .trump-bar {
+    grid-column: 1 / -1;
+  }
+  .trump-body {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .trump-dock {
+    grid-column: 2;
+    grid-row: 2;
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-height: 0;
+  }
+  .hand-area {
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .trump-hand-rail {
+    min-height: 0;
+    overflow-y: auto;
+    align-content: flex-start;
+  }
+  .trump-hand-rail {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    overflow-x: visible;
+  }
+  /* A touch smaller again, so a whole hand of thirteen fits the column
+     without scrolling it. */
+  .trump-dock .tcard-lg {
+    --cw: clamp(32px, 8.6vmin, 46px);
+  }
+  .trump-actions {
+    flex-wrap: wrap;
+  }
+  .trump-actions button {
+    flex: 1 1 auto;
+  }
 }

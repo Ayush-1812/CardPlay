@@ -267,162 +267,171 @@ export function TrumpTable({
         </div>
       </header>
 
-      {alerts}
+      {/* Everything above the hand scrolls within its own region, so the
+          table never pushes the hand or the controls off a short screen. */}
+      <div className="trump-body">
+        {alerts}
 
-      {(pub.phase === "trump_selection" || pub.round === 1) && (
-        <p className="toss-banner" role="status">
-          <span className="toss-label">
-            {pub.round === 1 ? "Toss winner" : "Trump choice"}
-          </span>
-          <strong>{teamName(pub.entitled_team)}</strong>
-          {pub.phase === "trump_selection" ? (
-            <>
-              {" chooses the trump suit. "}
-              {pub.decider >= 0 ? (
-                <>
-                  <strong>{nameOf(pub.decider)}</strong> is choosing.
-                </>
-              ) : (
-                <>
-                  {nameOf(trump0(pub.entitled_team))} or{" "}
-                  {nameOf(trump0(pub.entitled_team) + 2)} may choose.
-                </>
-              )}
-            </>
-          ) : (
-            <>
-              {" won the toss. "}
-              <strong>{nameOf(pub.chooser)}</strong> chose{" "}
-              {pub.trump ? SUIT_NAME[pub.trump] : "the trump suit"}.
-            </>
-          )}
-          {pub.round > 1 && " They won the previous round."}
-        </p>
-      )}
+        {(pub.phase === "trump_selection" || pub.round === 1) && (
+          <p className="toss-banner" role="status">
+            <span className="toss-label">
+              {pub.round === 1 ? "Toss winner" : "Trump choice"}
+            </span>
+            <strong>{teamName(pub.entitled_team)}</strong>
+            {pub.phase === "trump_selection" ? (
+              <>
+                {" chooses the trump suit. "}
+                {pub.decider >= 0 ? (
+                  <>
+                    <strong>{nameOf(pub.decider)}</strong> is choosing.
+                  </>
+                ) : (
+                  <>
+                    {nameOf(trump0(pub.entitled_team))} or{" "}
+                    {nameOf(trump0(pub.entitled_team) + 2)} may choose.
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                {" won the toss. "}
+                <strong>{nameOf(pub.chooser)}</strong> chose{" "}
+                {pub.trump ? SUIT_NAME[pub.trump] : "the trump suit"}.
+              </>
+            )}
+            {pub.round > 1 && " They won the previous round."}
+          </p>
+        )}
 
-      {teamPile(1 - self.team)}
+        {teamPile(1 - self.team)}
 
-      <div className="trump-felt">
-        {seatCard(ring.top, "top")}
-        {seatCard(ring.left, "left")}
-        {seatCard(ring.right, "right")}
+        <div className="trump-felt">
+          {seatCard(ring.top, "top")}
+          {seatCard(ring.left, "left")}
+          {seatCard(ring.right, "right")}
 
-        <div
-          className={`trick-area ${finished ? "finished" : ""}`}
-          aria-label="Cards played this trick"
-          aria-live="polite"
-        >
-          {trick.length === 0 ? (
-            <p className="trick-empty">
-              {pub.phase === "trump_selection"
-                ? "Waiting for the trump suit"
-                : myTurn
-                  ? "Your lead"
-                  : `${nameOf(pub.turn)} to lead`}
+          <div
+            className={`trick-area ${finished ? "finished" : ""}`}
+            aria-label="Cards played this trick"
+            aria-live="polite"
+          >
+            {trick.length === 0 ? (
+              <p className="trick-empty">
+                {pub.phase === "trump_selection"
+                  ? "Waiting for the trump suit"
+                  : myTurn
+                    ? "Your lead"
+                    : `${nameOf(pub.turn)} to lead`}
+              </p>
+            ) : (
+              trick.map((p, i) => {
+                const won = finished && collecting?.winner === p.seat;
+                return (
+                  <div
+                    key={p.card}
+                    className={`trick-card at-${positionOf(p.seat)} ${won ? "won" : ""} ${finished ? `collecting to-${collectSide}` : ""}`}
+                  >
+                    <TrumpCardFace id={p.card} size="md" />
+                    <span className="trick-who">
+                      {i === 0 ? "Led · " : ""}
+                      {nameOf(p.seat)}
+                      {won ? " · won" : ""}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {pub.lead_suit && pub.trick.length > 0 && (
+            <p className="lead-note" role="status">
+              Lead suit: {SUIT_NAME[pub.lead_suit]} {SUIT_SYMBOL[pub.lead_suit]}
             </p>
-          ) : (
-            trick.map((p, i) => {
-              const won = finished && collecting?.winner === p.seat;
-              return (
-                <div
-                  key={p.card}
-                  className={`trick-card at-${positionOf(p.seat)} ${won ? "won" : ""} ${finished ? `collecting to-${collectSide}` : ""}`}
-                >
-                  <TrumpCardFace id={p.card} size="md" />
-                  <span className="trick-who">
-                    {i === 0 ? "Led · " : ""}
-                    {nameOf(p.seat)}
-                    {won ? " · won" : ""}
-                  </span>
-                </div>
-              );
-            })
           )}
         </div>
 
-        {pub.lead_suit && pub.trick.length > 0 && (
-          <p className="lead-note" role="status">
-            Lead suit: {SUIT_NAME[pub.lead_suit]} {SUIT_SYMBOL[pub.lead_suit]}
-          </p>
-        )}
+        {teamPile(self.team)}
+        {seatCard(ring.bottom, "bottom")}
       </div>
 
-      {teamPile(self.team)}
-      {seatCard(ring.bottom, "bottom")}
-
-      <div className="hand-area">
-        <p className="hand-status" role="status" aria-live="polite">
-          {!playing
-            ? "Waiting for every player"
-            : pub.phase === "trump_selection"
-              ? "Trump is being chosen"
-              : myTurn
-                ? pending
-                  ? "Sending your card…"
-                  : "Your turn — choose a card"
-                : `Waiting for ${nameOf(pub.turn)}`}
-        </p>
-        <ul className="trump-hand-rail" aria-label="Your hand">
-          {sortHand(self.hand, pub.trump).map((id) => {
-            const legal = self.legal.includes(id);
-            const reason = whyIllegal(id, pub, self, myTurn);
-            const card = parseCard(id);
-            return (
-              <li key={id}>
-                <button
-                  type="button"
-                  className={`hand-card-btn ${legal ? "legal" : "illegal"} ${pending === id ? "pending" : ""}`}
-                  data-card={id}
-                  disabled={busy || offline || pending !== null}
-                  aria-label={`${cardLabel(id)}${legal ? "" : `. ${reason ?? ""}`}`}
-                  aria-disabled={!legal}
-                  onClick={() => void play(id)}
-                >
-                  <TrumpCardFace
-                    id={id}
-                    size="lg"
-                    dimmed={!legal && myTurn}
-                    highlight={legal && myTurn}
-                  />
-                  {card && (
-                    <span className="sr-only">
-                      {SUIT_NAME[card.suit as Suit]}
-                    </span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        {refused && (
-          <p className="refusal" role="alert">
-            {refused}
+      {/* The dock stays put: your hand, what the table is waiting for and
+          the controls are on screen whatever the device. */}
+      <div className="trump-dock">
+        <div className="hand-area">
+          <p className="hand-status" role="status" aria-live="polite">
+            {!playing
+              ? "Waiting for every player"
+              : pub.phase === "trump_selection"
+                ? "Trump is being chosen"
+                : myTurn
+                  ? pending
+                    ? "Sending your card…"
+                    : "Your turn — choose a card"
+                  : `Waiting for ${nameOf(pub.turn)}`}
           </p>
-        )}
-      </div>
+          <ul className="trump-hand-rail" aria-label="Your hand">
+            {sortHand(self.hand, pub.trump).map((id) => {
+              const legal = self.legal.includes(id);
+              const reason = whyIllegal(id, pub, self, myTurn);
+              const card = parseCard(id);
+              return (
+                <li key={id}>
+                  <button
+                    type="button"
+                    className={`hand-card-btn ${legal ? "legal" : "illegal"} ${pending === id ? "pending" : ""}`}
+                    data-card={id}
+                    disabled={busy || offline || pending !== null}
+                    aria-label={`${cardLabel(id)}${legal ? "" : `. ${reason ?? ""}`}`}
+                    aria-disabled={!legal}
+                    onClick={() => void play(id)}
+                  >
+                    <TrumpCardFace
+                      id={id}
+                      size="lg"
+                      dimmed={!legal && myTurn}
+                      highlight={legal && myTurn}
+                    />
+                    {card && (
+                      <span className="sr-only">
+                        {SUIT_NAME[card.suit as Suit]}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {refused && (
+            <p className="refusal" role="alert">
+              {refused}
+            </p>
+          )}
+        </div>
 
-      <div className="trump-actions">
-        <button type="button" className="btn-ghost" onClick={onLeave}>
-          Leave match
-        </button>
-        {chat && (
-          <button
-            type="button"
-            className="chat-toggle"
-            disabled={chatClosed}
-            aria-describedby={chatClosed ? "chat-closed-note" : undefined}
-            onClick={() => setChatOpen((v) => !v)}
-          >
-            Chat{unread > 0 ? ` (${unread})` : ""}
+        <div className="trump-actions">
+          <button type="button" className="btn-ghost" onClick={onLeave}>
+            Leave match
           </button>
+          {chat && (
+            <button
+              type="button"
+              className="chat-toggle"
+              disabled={chatClosed}
+              aria-describedby={chatClosed ? "chat-closed-note" : undefined}
+              onClick={() => setChatOpen((v) => !v)}
+            >
+              Chat{unread > 0 ? ` (${unread})` : ""}
+            </button>
+          )}
+        </div>
+        {chatClosed && (
+          <p id="chat-closed-note" className="chat-closed" role="note">
+            Chat is closed while the trump is chosen. It reopens for the rest of
+            the round.
+          </p>
         )}
       </div>
-      {chatClosed && (
-        <p id="chat-closed-note" className="chat-closed" role="note">
-          Chat is closed while the trump is chosen. It reopens for the rest of
-          the round.
-        </p>
-      )}
+
       {chat && chatOpen && !chatClosed && (
         <div className="trump-chat">
           <button
