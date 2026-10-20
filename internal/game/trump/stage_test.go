@@ -105,6 +105,13 @@ func TestCardConservationAndOwnership(t *testing.T) {
 		for _, id := range s.Played {
 			claim(id, "played")
 		}
+		for team := range s.Won {
+			for _, trick := range s.Won[team] {
+				for _, p := range trick.Cards {
+					claim(p.Card, "won by team "+string(rune('0'+team)))
+				}
+			}
+		}
 		if len(owner) != 52 {
 			t.Fatalf("%s: %d distinct cards, want 52", stage, len(owner))
 		}
