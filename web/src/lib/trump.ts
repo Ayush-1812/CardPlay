@@ -126,6 +126,9 @@ export type TrumpSelf = {
   team: number;
   hand: string[];
   legal: string[];
+  // The tricks this player's own team has taken this round. The other
+  // team's are never sent.
+  won: TrumpTrick[];
   may_choose: boolean;
   may_delegate: boolean;
 };
