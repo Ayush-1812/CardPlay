@@ -36,11 +36,27 @@ func (Module) New(_ context.Context, setup game.Setup) (game.State, error) {
 	if setup.Random == nil {
 		return game.State{}, errors.New("setup needs a random source")
 	}
-	s, _, err := NewGame(users, setup.Random)
+	s, _, err := NewGame(users, decksFrom(setup.Options), setup.Random)
 	if err != nil {
 		return game.State{}, err
 	}
 	return encode(s)
+}
+
+// decksFrom reads how many decks the room asked for. Anything missing or
+// out of range falls back to one, so a room that has never set it plays the
+// ordinary game rather than refusing to start.
+func decksFrom(options json.RawMessage) int {
+	if len(options) == 0 {
+		return 1
+	}
+	var in struct {
+		Decks int `json:"decks"`
+	}
+	if json.Unmarshal(options, &in) != nil || in.Decks < 1 || in.Decks > MaxDecks {
+		return 1
+	}
+	return in.Decks
 }
 
 // Validate decodes persisted state and checks every invariant.

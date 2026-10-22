@@ -675,7 +675,11 @@ func (m *Module) start(ctx context.Context, q *store.Queries, roomID, actor stri
 		}
 		participants = append(participants, game.Participant{UserID: mem.ID, Seat: i})
 	}
-	st, err := g.New(ctx, game.Setup{Participants: participants, Random: m.Random})
+	options, err := json.Marshal(map[string]any{"decks": int(room.DeckCount)})
+	if err != nil {
+		return "", err
+	}
+	st, err := g.New(ctx, game.Setup{Participants: participants, Random: m.Random, Options: options})
 	if err != nil {
 		return "", err
 	}

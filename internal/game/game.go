@@ -27,6 +27,11 @@ type Participant struct {
 type Setup struct {
 	Participants []Participant
 	Random       io.Reader
+	// Options are the room's settings for this game, as JSON. A game that
+	// has none ignores it; Bluff reads how many decks to deal. Anything a
+	// game does not understand is left alone, so a room setting can be
+	// added without every engine knowing about it.
+	Options json.RawMessage
 }
 type State struct {
 	SchemaVersion int

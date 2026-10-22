@@ -17,8 +17,9 @@ const (
 	MaxPlayers = 6
 )
 
-// MaxCardsPerPlay is the most cards one play may put down.
-const MaxCardsPerPlay = 4
+// maxPlay is the most cards one play may put down: the four of a rank in
+// one deck, and four more for every extra deck in use.
+func (s *State) maxPlay() int { return CopiesPerRank * max(1, s.Decks) }
 
 // ChallengeWindow is how long anyone may call a bluff. It is a CardPlay
 // policy, not a rule of the game: five seconds is long enough to decide and
@@ -89,7 +90,10 @@ type Reveal struct {
 // State is the whole game. It is stored as one JSON snapshot per revision
 // and is server-only: clients receive projections from ViewFor.
 type State struct {
-	Schema  int      `json:"schema"`
+	Schema int `json:"schema"`
+	// Decks is how many 52-card decks this game was dealt from. Every copy
+	// of a card has its own id, so the deck is still a set.
+	Decks   int      `json:"decks"`
 	Players []Player `json:"players"`
 
 	Phase Phase `json:"phase"`
@@ -185,8 +189,11 @@ func (s *State) CheckInvariants() error {
 		seen[id]++
 		count++
 	}
-	if count != DeckSize {
-		return fmt.Errorf("%d cards accounted for, want %d", count, DeckSize)
+	if s.Decks < 1 || s.Decks > MaxDecks {
+		return fmt.Errorf("%d decks", s.Decks)
+	}
+	if want := DeckSize * s.Decks; count != want {
+		return fmt.Errorf("%d cards accounted for, want %d", count, want)
 	}
 	for id, n := range seen {
 		if n != 1 {
@@ -203,7 +210,7 @@ func (s *State) CheckInvariants() error {
 		if s.Last.Count != len(s.Last.Cards) {
 			return fmt.Errorf("the latest play claims %d cards and holds %d", s.Last.Count, len(s.Last.Cards))
 		}
-		if s.Last.Count < 1 || s.Last.Count > MaxCardsPerPlay {
+		if s.Last.Count < 1 || s.Last.Count > s.maxPlay() {
 			return fmt.Errorf("the latest play holds %d cards", s.Last.Count)
 		}
 		// The batch that may be challenged must still be on top of the pile.

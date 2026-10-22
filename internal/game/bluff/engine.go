@@ -13,6 +13,9 @@ import (
 // ErrPlayers is returned when a table cannot be seated.
 var ErrPlayers = errors.New("bluff needs three to six distinct players")
 
+// ErrDecks is returned when a room asks for a deck count out of range.
+var ErrDecks = errors.New("bluff is played with one to four decks")
+
 // Rejection codes. Each is a rule-level refusal: the state is unchanged and
 // the player is told why.
 const (
@@ -59,12 +62,16 @@ type Event struct {
 var source io.Reader = rand.Reader
 
 // NewGame seats the players, deals the whole deck and chooses who starts.
+// decks is how many 52-card decks to deal; one is the ordinary game.
 //
 // Dealing and the first player are drawn separately, so the seat that gets
 // the extra card is not also always the seat that leads.
-func NewGame(userIDs []string, random io.Reader) (*State, []Event, error) {
+func NewGame(userIDs []string, decks int, random io.Reader) (*State, []Event, error) {
 	if len(userIDs) < MinPlayers || len(userIDs) > MaxPlayers {
 		return nil, nil, ErrPlayers
+	}
+	if decks < 1 || decks > MaxDecks {
+		return nil, nil, ErrDecks
 	}
 	seen := map[string]bool{}
 	for _, id := range userIDs {
@@ -78,6 +85,7 @@ func NewGame(userIDs []string, random io.Reader) (*State, []Event, error) {
 	}
 	s := &State{
 		Schema:   SchemaVersion,
+		Decks:    decks,
 		Phase:    PhasePlay,
 		Rank:     Ace,
 		Pile:     []CardID{},
@@ -89,10 +97,7 @@ func NewGame(userIDs []string, random io.Reader) (*State, []Event, error) {
 		s.Players = append(s.Players, Player{UserID: id, Hand: []CardID{}})
 	}
 
-	deck := make([]CardID, 0, DeckSize)
-	for _, c := range Manifest() {
-		deck = append(deck, c.ID)
-	}
+	deck := BuildDeck(decks)
 	if err := shuffle(deck, random); err != nil {
 		return nil, nil, err
 	}
@@ -116,6 +121,7 @@ func NewGame(userIDs []string, random io.Reader) (*State, []Event, error) {
 
 	events := []Event{{Kind: "game_started", Audience: Public, Data: map[string]any{
 		"players": len(s.Players), "first_seat": lead, "rank": string(s.Rank),
+		"decks": decks,
 	}}}
 	for seat, p := range s.Players {
 		events = append(events, Event{Kind: "dealt", Audience: seat, Data: map[string]any{
@@ -237,8 +243,8 @@ func (s *State) play(seat int, a PlayCards, now time.Time) ([]Event, error) {
 	if seat != s.Turn {
 		return nil, reject(CodeNotYourTurn, "it is not your turn")
 	}
-	if len(a.Cards) < 1 || len(a.Cards) > MaxCardsPerPlay {
-		return nil, reject(CodeIllegal, "play between one and %d cards", MaxCardsPerPlay)
+	if len(a.Cards) < 1 || len(a.Cards) > s.maxPlay() {
+		return nil, reject(CodeIllegal, "play between one and %d cards", s.maxPlay())
 	}
 	// Every card must be one this player holds, and named once.
 	hand := s.Players[seat].Hand

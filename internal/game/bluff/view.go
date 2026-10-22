@@ -35,8 +35,11 @@ type PublicView struct {
 	// Result is the last resolved challenge, cards and all: those were
 	// turned face up for everyone.
 	Result *Reveal `json:"result,omitempty"`
-	// MaxCards is how many cards one play may hold.
+	// MaxCards is how many cards one play may hold, which grows with the
+	// number of decks in play.
 	MaxCards int `json:"max_cards"`
+	// Decks is how many decks this game was dealt from.
+	Decks int `json:"decks"`
 }
 
 // Claim is a declaration without the cards behind it: the count and the
@@ -80,7 +83,8 @@ func (s *State) ViewFor(seat int) View {
 		Pending:   s.Pending,
 		Winner:    s.Winner,
 		Result:    s.Result,
-		MaxCards:  MaxCardsPerPlay,
+		MaxCards:  s.maxPlay(),
+		Decks:     s.Decks,
 	}
 	if s.Last != nil {
 		pub.Last = &Claim{

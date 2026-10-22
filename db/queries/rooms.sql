@@ -5,7 +5,7 @@ SELECT * FROM rooms WHERE id=$1;
 -- name: LockRoom :one
 SELECT * FROM rooms WHERE id=$1 FOR UPDATE;
 -- name: UpdateRoom :exec
-UPDATE rooms SET name=$2,capacity=$3,team_a=$4,team_b=$5 WHERE id=$1;
+UPDATE rooms SET name=$2,capacity=$3,team_a=$4,team_b=$5,deck_count=$6 WHERE id=$1;
 -- name: SetRoomHost :exec
 UPDATE rooms SET host_id=$2 WHERE id=$1;
 -- name: CloseRoom :exec

@@ -124,6 +124,7 @@ type Room struct {
 	CreatedAt    time.Time `json:"created_at"`
 	TeamA        string    `json:"team_a"`
 	TeamB        string    `json:"team_b"`
+	DeckCount    int16     `json:"deck_count"`
 }
 
 type RoomBan struct {

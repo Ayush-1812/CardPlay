@@ -46,6 +46,10 @@ func (m *Module) describe(id string) (game.Descriptor, bool) {
 	return g.Descriptor(), true
 }
 
+// MaxDecks bounds how many 52-card decks a room may be played with. Four
+// is 208 cards, which is already a lot to hold at a six-player table.
+const MaxDecks = 4
+
 type View struct {
 	Room    store.Room         `json:"room"`
 	Members []store.MembersRow `json:"members"`

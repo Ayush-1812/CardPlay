@@ -64,7 +64,7 @@ func asRule(err error, target **RuleError) bool {
 func table(t *testing.T, rank Rank, turn int, hands ...[]CardID) *State {
 	t.Helper()
 	s := &State{
-		Schema: SchemaVersion, Phase: PhasePlay, Rank: rank, Turn: turn,
+		Schema: SchemaVersion, Decks: 1, Phase: PhasePlay, Rank: rank, Turn: turn,
 		Pile: []CardID{}, Accepted: make([]bool, len(hands)), Pending: -1, Winner: -1,
 	}
 	held := map[CardID]bool{}
@@ -99,7 +99,7 @@ func TestDealShapes(t *testing.T) {
 		{5, []int{11, 11, 10, 10, 10}},
 		{6, []int{9, 9, 9, 9, 8, 8}},
 	} {
-		s, _, err := NewGame(users(tc.players), stream(byte(tc.players)))
+		s, _, err := NewGame(users(tc.players), 1, stream(byte(tc.players)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +133,7 @@ func TestDealShapes(t *testing.T) {
 		}
 	}
 	for _, bad := range [][]string{users(2), users(7), {"a", "a", "b"}, {"a", "", "b"}} {
-		if _, _, err := NewGame(bad, rand.Reader); err != ErrPlayers {
+		if _, _, err := NewGame(bad, 1, rand.Reader); err != ErrPlayers {
 			t.Fatalf("%v should be refused, got %v", bad, err)
 		}
 	}
@@ -145,7 +145,7 @@ func TestDealStartsSomewhereDifferent(t *testing.T) {
 	firstBiggest := map[int]int{}
 	leads := map[int]int{}
 	for i := range 400 {
-		s, _, err := NewGame(users(5), stream(byte(i)))
+		s, _, err := NewGame(users(5), 1, stream(byte(i)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -454,7 +454,7 @@ func TestWinningOnTheLastCard(t *testing.T) {
 
 // A full game played to a winner keeps all 52 cards and every invariant.
 func TestAGameRunsToAWinner(t *testing.T) {
-	s, _, err := NewGame(users(4), stream(3))
+	s, _, err := NewGame(users(4), 1, stream(3))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +466,7 @@ func TestAGameRunsToAWinner(t *testing.T) {
 		switch s.Phase {
 		case PhasePlay:
 			hand := s.Players[s.Turn].Hand
-			n := min(MaxCardsPerPlay, len(hand))
+			n := min(s.maxPlay(), len(hand))
 			s = ok(t, s, s.Turn, PlayCards{Cards: slices.Clone(hand[:n])}, now)
 		case PhaseChallenge:
 			// A couple of challenges early on, then the table settles. If
@@ -496,4 +496,86 @@ func TestAGameRunsToAWinner(t *testing.T) {
 	if total != DeckSize {
 		t.Fatalf("%d cards at the end, want %d", total, DeckSize)
 	}
+}
+
+// More than one deck: every copy is its own card, the whole lot is dealt,
+// and a play may name as many as the decks allow.
+func TestMoreDecks(t *testing.T) {
+	for decks := 1; decks <= MaxDecks; decks++ {
+		s, _, err := NewGame(users(4), decks, stream(byte(decks)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[CardID]bool{}
+		held := 0
+		for _, p := range s.Players {
+			for _, id := range p.Hand {
+				if seen[id] {
+					t.Fatalf("%d decks: %s was dealt twice", decks, id)
+				}
+				if _, ok := Lookup(id); !ok {
+					t.Fatalf("%d decks: %s is not a card", decks, id)
+				}
+				seen[id] = true
+				held++
+			}
+		}
+		if want := DeckSize * decks; held != want {
+			t.Fatalf("%d decks: %d cards dealt, want %d", decks, held, want)
+		}
+		if got := s.maxPlay(); got != CopiesPerRank*decks {
+			t.Fatalf("%d decks: a play may hold %d cards, want %d", decks, got, CopiesPerRank*decks)
+		}
+		if err := s.CheckInvariants(); err != nil {
+			t.Fatalf("%d decks: %v", decks, err)
+		}
+	}
+	// Out of range is refused rather than quietly clamped.
+	for _, bad := range []int{0, -1, MaxDecks + 1} {
+		if _, _, err := NewGame(users(4), bad, rand.Reader); err != ErrDecks {
+			t.Fatalf("%d decks should be refused, got %v", bad, err)
+		}
+	}
+}
+
+// Two copies of one card are two cards: both can be held, both can be
+// played together, and a challenge reads each on its own.
+func TestDuplicateCardsAreDistinct(t *testing.T) {
+	// A two-deck table: three hands, and the other 104 minus those on the
+	// pile, so the deck is whole.
+	hands := [][]CardID{
+		{"q-hearts", "q-hearts#2", "k-spades"},
+		{"3-spades"},
+		{"4-spades"},
+	}
+	s := &State{
+		Schema: SchemaVersion, Decks: 2, Phase: PhasePlay, Rank: Queen, Turn: 0,
+		Pile: []CardID{}, Accepted: make([]bool, len(hands)), Pending: -1, Winner: -1,
+	}
+	held := map[CardID]bool{}
+	for i, hand := range hands {
+		s.Players = append(s.Players, Player{UserID: string(rune('a' + i)), Hand: slices.Clone(hand)})
+		for _, id := range hand {
+			held[id] = true
+		}
+	}
+	for _, id := range BuildDeck(2) {
+		if !held[id] {
+			s.Pile = append(s.Pile, id)
+		}
+	}
+	if err := s.CheckInvariants(); err != nil {
+		t.Fatal(err)
+	}
+	// Both queens, from different decks, are a truthful pair.
+	played := ok(t, s, 0, PlayCards{Cards: []CardID{"q-hearts", "q-hearts#2"}}, when)
+	if played.Last.Count != 2 {
+		t.Fatalf("count %d", played.Last.Count)
+	}
+	after := ok(t, played, 1, CallBluff{}, when)
+	if !after.Result.Truthful {
+		t.Fatal("two queens from two decks are still two queens")
+	}
+	// Naming the same copy twice is still refused.
+	rejected(t, s, 0, PlayCards{Cards: []CardID{"q-hearts", "q-hearts"}}, CodeIllegal)
 }

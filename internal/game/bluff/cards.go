@@ -6,6 +6,7 @@ package bluff
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -49,7 +50,10 @@ var Order = []Rank{Ace, Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Ja
 // way every time before it is shuffled.
 var Suits = []Suit{Spades, Hearts, Diamonds, Clubs}
 
-// CardID is one physical card, "rank-suit": "q-hearts", "10-spades".
+// CardID is one physical card. With a single deck that is "rank-suit":
+// "q-hearts", "10-spades". With more than one deck every copy needs its own
+// identity, so the second deck's queen of hearts is "q-hearts#2". The rank
+// and suit read the same either way; only the copy differs.
 type CardID string
 
 // Card is a card's public identity. Nothing here is secret; what is secret
@@ -60,8 +64,16 @@ type Card struct {
 	Suit Suit   `json:"suit"`
 }
 
-// DeckSize is the whole deck: four suits of thirteen ranks, no jokers.
+// DeckSize is one whole deck: four suits of thirteen ranks, no jokers.
 const DeckSize = 52
+
+// MaxDecks is how many decks one game may be dealt from. Four is 208
+// cards, which is already a lot to hold at a six-player table.
+const MaxDecks = 4
+
+// CopiesPerRank is how many cards of each rank one deck holds, which is
+// what bounds a single play.
+const CopiesPerRank = 4
 
 var (
 	manifest []Card
@@ -88,10 +100,38 @@ func Manifest() []Card {
 	return out
 }
 
-// Lookup returns a card by id.
+// Lookup returns a card by id, whichever deck the copy came from.
 func Lookup(id CardID) (Card, bool) {
-	c, ok := byID[id]
+	c, ok := byID[baseID(id)]
 	return c, ok
+}
+
+// copyID names the nth copy of a card. The first deck keeps the plain id,
+// so a single-deck game reads exactly as it always did.
+func copyID(id CardID, deck int) CardID {
+	if deck <= 1 {
+		return id
+	}
+	return CardID(string(id) + "#" + strconv.Itoa(deck))
+}
+
+// baseID strips the copy marker, leaving the card's face.
+func baseID(id CardID) CardID {
+	if cut := strings.IndexByte(string(id), '#'); cut >= 0 {
+		return CardID(string(id)[:cut])
+	}
+	return id
+}
+
+// BuildDeck returns decks whole decks, every card with its own id.
+func BuildDeck(decks int) []CardID {
+	out := make([]CardID, 0, DeckSize*decks)
+	for deck := 1; deck <= decks; deck++ {
+		for _, c := range manifest {
+			out = append(out, copyID(c.ID, deck))
+		}
+	}
+	return out
 }
 
 // RankName writes a rank the way a player would say it, for the sentence
@@ -135,12 +175,8 @@ func (r Rank) Valid() bool {
 	return false
 }
 
-// ParseCard splits an id into its rank and suit.
+// ParseCard splits an id into its rank and suit, ignoring the copy.
 func ParseCard(id CardID) (Card, error) {
-	cut := strings.LastIndex(string(id), "-")
-	if cut <= 0 {
-		return Card{}, fmt.Errorf("card %q is not rank-suit", id)
-	}
 	c, ok := Lookup(id)
 	if !ok {
 		return Card{}, fmt.Errorf("unknown card %q", id)
