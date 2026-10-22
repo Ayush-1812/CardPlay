@@ -268,6 +268,9 @@ export function TrumpTable({
           )}
         </div>
       </header>
+      {/* Voice sits with the trump call, not over the cards: it is a
+          control, and the hand needs the room. */}
+      {voice}
 
       {/* Everything above the hand scrolls within its own region, so the
           table never pushes the hand or the controls off a short screen. */}
@@ -359,7 +362,6 @@ export function TrumpTable({
       {/* The dock stays put: your hand, what the table is waiting for and
           the controls are on screen whatever the device. */}
       <div className="trump-dock">
-        {voice}
         <div className="hand-area">
           <p className="hand-status" role="status" aria-live="polite">
             {!playing

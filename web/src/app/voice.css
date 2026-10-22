@@ -147,3 +147,110 @@
     overflow-y: auto;
   }
 }
+
+/* ---- at the top of a table ----
+   Beside the call, the bar is a control strip: the people fit on one line
+   each and the whole thing stays out of the cards' way. */
+.trump-table > .voice-bar,
+.bluff-table > .voice-bar {
+  padding: 6px 8px;
+  gap: 4px;
+}
+.trump-table > .voice-bar .voice-people,
+.bluff-table > .voice-bar .voice-people {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 2px 10px;
+}
+.trump-table > .voice-bar .voice-person,
+.bluff-table > .voice-bar .voice-person {
+  font-size: 11px;
+}
+.trump-table > .voice-bar .voice-volume input,
+.bluff-table > .voice-bar .voice-volume input {
+  width: 64px;
+  min-height: 32px;
+}
+/* Not joined yet: one line and a button, nothing more. */
+.trump-table > .voice-bar:not(.live),
+.bluff-table > .voice-bar:not(.live) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.trump-table > .voice-bar:not(.live) .voice-note,
+.bluff-table > .voice-bar:not(.live) .voice-note {
+  margin: 0;
+}
+@media (max-height: 620px) {
+  .trump-table > .voice-bar,
+  .bluff-table > .voice-bar {
+    max-height: 22dvh;
+  }
+  .trump-table > .voice-bar .voice-flags,
+  .bluff-table > .voice-bar .voice-flags {
+    display: none;
+  }
+}
+
+/* Leave sits with the other controls at the top of a table rather than
+   pushing itself onto a line of its own. */
+.trump-table > .voice-bar .voice-btn.leave,
+.bluff-table > .voice-bar .voice-btn.leave {
+  margin-left: 0;
+}
+/* One line per player: a dot, a name, a slider. Anything else is only
+   shown when it needs saying. */
+.trump-table > .voice-bar .voice-person,
+.bluff-table > .voice-bar .voice-person {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+.trump-table > .voice-bar .voice-flags,
+.bluff-table > .voice-bar .voice-flags {
+  grid-column: auto;
+  grid-row: auto;
+  white-space: nowrap;
+}
+.trump-table > .voice-bar .voice-flags:empty,
+.bluff-table > .voice-bar .voice-flags:empty {
+  display: none;
+}
+
+/* Collapsed: a line of who is in voice, with a dot that lights when they
+   speak. The volumes live behind a button so the table keeps its room. */
+.voice-people.closed {
+  display: none;
+}
+.voice-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.voice-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 11px;
+  max-width: 48vw;
+}
+.voice-chip.speaking {
+  background: rgba(239, 192, 73, 0.18);
+}
+.voice-chip.muted {
+  opacity: 0.65;
+}
+.voice-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.voice-chip-flag {
+  opacity: 0.75;
+}

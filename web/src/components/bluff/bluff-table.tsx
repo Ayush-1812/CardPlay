@@ -164,6 +164,8 @@ export function BluffTable({
         </div>
       </header>
 
+      {voice}
+
       <div className="bluff-body">
         {alerts}
 
@@ -274,7 +276,6 @@ export function BluffTable({
       </div>
 
       <div className="bluff-dock">
-        {voice}
         <p className="hand-status" role="status" aria-live="polite">
           {!playing
             ? "Waiting for the table"

@@ -7,7 +7,13 @@
   --felt-dark: #0e3340;
   --line: rgba(239, 192, 73, 0.22);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "bar"
+    "voice"
+    "body"
+    "dock";
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 8px;
   height: 100dvh;
   max-height: 100dvh;
@@ -23,6 +29,7 @@
   color: var(--cream, #f3ead6);
 }
 .bluff-body {
+  grid-area: body;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -35,13 +42,21 @@
   flex: 0 0 auto;
 }
 .bluff-dock {
+  grid-area: dock;
   display: grid;
   gap: 6px;
   min-width: 0;
 }
+/* Voice belongs with the call at the top, not over the hand. */
+.bluff-table > .voice-bar {
+  grid-area: voice;
+  max-height: 26dvh;
+  overflow-y: auto;
+}
 
 /* ---- top bar ---- */
 .bluff-bar {
+  grid-area: bar;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;

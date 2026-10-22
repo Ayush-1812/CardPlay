@@ -51,6 +51,41 @@ async function fakeMic(p: Player) {
   });
 }
 
+// peerLevels measures what each peer's audio element is actually playing,
+// by listening to it the way the player's ears would. A link that is
+// "connected" but silent is a link that does not work, and the only way to
+// tell the difference is to listen.
+async function peerLevels(page: Page) {
+  return page.evaluate(async () => {
+    const elements = [
+      ...document.querySelectorAll("audio[data-voice-peer]"),
+    ] as HTMLAudioElement[];
+    const ctx = new AudioContext();
+    const readings = elements.map((el) => {
+      const stream = el.srcObject as MediaStream | null;
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      if (stream && stream.getAudioTracks().length)
+        ctx.createMediaStreamSource(stream).connect(analyser);
+      return { peer: el.getAttribute("data-voice-peer") ?? "", analyser };
+    });
+    const samples = new Float32Array(2048);
+    const peaks = readings.map(() => 0);
+    // Listen for a moment: a tone is not loud in every frame.
+    for (let i = 0; i < 25; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      readings.forEach((r, n) => {
+        r.analyser.getFloatTimeDomainData(samples);
+        let sum = 0;
+        for (const s of samples) sum += s * s;
+        peaks[n] = Math.max(peaks[n], Math.sqrt(sum / samples.length));
+      });
+    }
+    await ctx.close();
+    return readings.map((r, n) => ({ peer: r.peer, level: peaks[n] }));
+  });
+}
+
 const voice = (p: Player) => p.page.locator(".voice-bar");
 const joinVoice = async (p: Player) => {
   await voice(p).getByRole("button", { name: "Join voice" }).click();
@@ -114,12 +149,10 @@ test.describe.serial("voice chat at a four-seat table", () => {
       await expect
         .poll(
           async () => {
-            const peers = await peerAudio(p.page);
-            return peers.filter((x) =>
-              x.tracks.some((t) => t.live && t.receiving),
-            ).length;
+            const levels = await peerLevels(p.page);
+            return levels.filter((l) => l.level > 0.02).length;
           },
-          { timeout: 30_000, message: `${p.name} is not receiving audio` },
+          { timeout: 30_000, message: `${p.name} cannot hear the others` },
         )
         .toBe(3);
     }
@@ -134,11 +167,12 @@ test.describe.serial("voice chat at a four-seat table", () => {
     // The others are told, in words rather than only a colour.
     for (const p of players.slice(1))
       await expect(
-        voice(p).locator(".voice-person", { hasText: "va" }).first(),
+        voice(p).locator(".voice-chip", { hasText: "va" }).first(),
       ).toContainText("muted", { timeout: 15_000 });
     await voice(host).getByRole("button", { name: "Unmute" }).click();
 
     // Each player's volume is their own; it reaches the audio element.
+    await voice(second).getByRole("button", { name: "Volumes" }).click();
     const row = voice(second).locator(".voice-person").first();
     await row.locator("input[type=range]").evaluate((el) => {
       const input = el as HTMLInputElement;
@@ -156,6 +190,10 @@ test.describe.serial("voice chat at a four-seat table", () => {
         ),
       )
       .toBe(true);
+    // Put the panel away again: it is a settings drawer, not the resting
+    // state of the bar.
+    await voice(second).getByRole("button", { name: "Hide volumes" }).click();
+    await expect(voice(second).locator(".voice-chip").first()).toBeVisible();
   });
 
   test("push-to-talk only transmits while held", async () => {
@@ -165,15 +203,17 @@ test.describe.serial("voice chat at a four-seat table", () => {
     await expect(hold).toBeVisible();
     // Held: the microphone transmits, and the others see it. Released: it
     // stops. The indicator follows the track, so this is the gate itself.
-    const listenerRow = voice(players[1])
-      .locator(".voice-person", { hasText: "va" })
+    // Speech shows as a lit dot on the listener's chip, so that is what
+    // the test watches.
+    const listenerChip = voice(players[1])
+      .locator(".voice-chip", { hasText: "va" })
       .first();
     await hold.dispatchEvent("pointerdown");
     await expect(hold).toHaveText("Talking…");
-    await expect(listenerRow).toContainText("speaking", { timeout: 15_000 });
+    await expect(listenerChip).toHaveClass(/speaking/, { timeout: 15_000 });
     await hold.dispatchEvent("pointerup");
     await expect(hold).toHaveText("Hold to talk");
-    await expect(listenerRow).not.toContainText("speaking", {
+    await expect(listenerChip).not.toHaveClass(/speaking/, {
       timeout: 15_000,
     });
     await voice(host).getByRole("button", { name: "Push to talk" }).click();
@@ -329,10 +369,154 @@ test.describe.serial("voice is scoped and optional", () => {
     }
     // Each is alone in their own room's channel.
     for (const p of [a, b]) {
-      await expect(voice(p).locator(".voice-person")).toHaveCount(0);
+      await expect(voice(p).locator(".voice-chip")).toHaveCount(0);
       await expect(voice(p)).toContainText("Nobody else has joined voice yet");
       expect(await peerAudio(p.page)).toEqual([]);
     }
     for (const p of [a, b]) await p.context.close();
+  });
+});
+
+// Five players, all talking at once, with the ICE request slowed to what a
+// round trip to a hosted API costs. That delay is what used to break the
+// mesh: it widened the gap between "is there a connection to this player?"
+// and "here is one", so an arriving offer and our own connect each built
+// one and half the pairs ended up silent.
+test.describe.serial("voice holds up with five players", () => {
+  const players: Player[] = [];
+
+  test.beforeAll(async ({ browser }) => {
+    for (const name of ["pa", "pb", "pc", "pd", "pe"]) {
+      const p = await newPlayer(browser, name, {
+        viewport: { width: 1280, height: 900 },
+      });
+      await fakeMic(p);
+      // Every client pays a few hundred milliseconds for its ICE servers,
+      // as it would against a hosted API.
+      await p.context.route("**/api/v1/voice/ice", async (route) => {
+        await new Promise((r) => setTimeout(r, 400));
+        await route.continue();
+      });
+      players.push(p);
+    }
+  });
+  test.afterAll(async () => {
+    for (const p of players) await p?.context.close();
+  });
+
+  test("everyone hears everyone", async () => {
+    const host = players[0];
+    await playAsGuest(host);
+    // A six-seat game, so five can sit down. Voice follows the room, so
+    // there is no need to start a match to talk.
+    await host.page.getByRole("button", { name: /^Bluff/ }).click();
+    await host.page.getByRole("button", { name: "Create room" }).click();
+    await expect(
+      host.page.getByRole("heading", { level: 1, name: /'s table$/ }),
+    ).toBeVisible();
+    await host.page.getByText("Room settings").click();
+    await host.page
+      .locator('.room-settings select[name="capacity"]')
+      .selectOption("5");
+    await host.page
+      .locator(".room-settings")
+      .getByRole("button", { name: "Save" })
+      .click();
+    const link = await host.page.getByLabel("Invite link").inputValue();
+    for (const p of players.slice(1)) {
+      await p.page.goto(link);
+      await p.page.getByLabel("Your name").fill(p.name);
+      await p.page.getByRole("button", { name: "Join as guest" }).click();
+      await expect(p.page.locator(".room-head .pill")).toHaveText("Connected");
+    }
+
+    // Joining at slightly different moments, the way five people actually
+    // press a button.
+    for (const p of players) {
+      await p.page
+        .locator(".voice-bar")
+        .getByRole("button", { name: "Join voice" })
+        .click();
+      await p.page.waitForTimeout(150);
+    }
+    for (const p of players)
+      await expect(
+        p.page
+          .locator(".voice-bar")
+          .getByRole("button", { name: "Leave voice" }),
+      ).toBeVisible({ timeout: 30_000 });
+
+    // Everyone sees the other four.
+    for (const p of players)
+      await expect(p.page.locator(".voice-chip")).toHaveCount(4, {
+        timeout: 30_000,
+      });
+
+    // And can hear all four. Measured, not inferred: a remote track's
+    // muted flag is not kept honestly -- Chrome reports muted on links that
+    // are carrying audio perfectly well -- so the test listens instead.
+    for (const p of players) {
+      await expect
+        .poll(
+          async () => {
+            const levels = await peerLevels(p.page);
+            return levels.filter((l) => l.level > 0.02).length;
+          },
+          { timeout: 45_000, message: `${p.name} cannot hear everyone` },
+        )
+        .toBe(4);
+      // The bar agrees: nobody is left showing "connecting".
+      await expect(p.page.locator(".voice-chip")).toHaveCount(4);
+      await expect(
+        p.page.locator(".voice-chip-flag", { hasText: "connecting" }),
+      ).toHaveCount(0, { timeout: 30_000 });
+    }
+  });
+
+  test("a player whose connection drops is heard again", async () => {
+    // The realistic failure: signalling goes away for a moment. The server
+    // forgets the membership, the others drop that peer, and everything has
+    // to come back on its own -- nobody presses anything.
+    const victim = players[2];
+    await victim.page.evaluate(() => {
+      const w = window as unknown as { __sockets: WebSocket[] };
+      for (const s of w.__sockets) s.close();
+    });
+
+    // Back in the channel.
+    await expect(
+      victim.page
+        .locator(".voice-bar")
+        .getByRole("button", { name: "Leave voice" }),
+    ).toBeVisible({ timeout: 40_000 });
+    await expect(victim.page.locator(".voice-chip")).toHaveCount(4, {
+      timeout: 40_000,
+    });
+
+    // And audible again, in both directions.
+    await expect
+      .poll(
+        async () => {
+          const levels = await peerLevels(victim.page);
+          return levels.filter((l) => l.level > 0.02).length;
+        },
+        { timeout: 60_000, message: "the returning player cannot hear anyone" },
+      )
+      .toBe(4);
+    for (const other of players.filter((p) => p !== victim))
+      await expect
+        .poll(
+          async () => {
+            const levels = await peerLevels(other.page);
+            return levels.filter((l) => l.level > 0.02).length;
+          },
+          { timeout: 60_000, message: `${other.name} cannot hear everyone` },
+        )
+        .toBe(4);
+  });
+
+  test("no page errors anywhere", async () => {
+    for (const p of players)
+      expect(p.errors, `${p.name} page errors`).toEqual([]);
   });
 });
