@@ -47,20 +47,52 @@ export const MIC_CONSTRAINTS: MediaStreamConstraints = {
 };
 
 // Turns a getUserMedia failure into something worth showing a player.
-export function micErrorMessage(err: unknown): string {
+export async function micErrorMessage(err: unknown): Promise<string> {
   const name = (err as { name?: string })?.name ?? "";
   switch (name) {
     case "NotAllowedError":
     case "SecurityError":
-      return "Your browser blocked the microphone. Allow it in the address bar, then join voice again.";
+      // A refusal has two very different causes, and telling a player to
+      // look in the address bar is wrong for one of them. If the site is
+      // still allowed to ask, nothing was ever asked: the operating system
+      // or a policy refused on the browser's behalf.
+      return (await siteIsBlocked())
+        ? "This site is blocked from using your microphone. Open the icon at the left of the address bar, set Microphone to Allow, then join voice again."
+        : "Your system is blocking the microphone for browsers, so you were never asked. On Windows: Settings, Privacy & security, Microphone, turn on microphone access for apps. On macOS: System Settings, Privacy & Security, Microphone. Then join voice again.";
     case "NotFoundError":
     case "OverconstrainedError":
       return "No microphone was found. Plug one in or choose another device, then join voice again.";
     case "NotReadableError":
       return "Another app is using your microphone. Close it and join voice again.";
     default:
+      if (!isSecureContext())
+        return "Microphones only work on a secure page. Open the site over https (or on localhost) and join voice again.";
       return "The microphone could not be opened. You can keep playing; voice is optional.";
   }
+}
+
+// siteIsBlocked reports whether this origin itself is in the browser's
+// blocked list, as opposed to the request being refused above the browser.
+// Browsers without the Permissions API fall back to the site answer, which
+// is the more common cause.
+async function siteIsBlocked(): Promise<boolean> {
+  try {
+    const status = await navigator.permissions.query({
+      name: "microphone" as PermissionName,
+    });
+    return status.state === "denied";
+  } catch {
+    return true;
+  }
+}
+
+// A page served over plain http (other than localhost) cannot open a
+// microphone at all, and navigator.mediaDevices is missing entirely.
+function isSecureContext(): boolean {
+  return (
+    typeof window === "undefined" ||
+    (window.isSecureContext && !!navigator.mediaDevices?.getUserMedia)
+  );
 }
 
 // Who makes the offer. Both sides learn about each other at the same moment,
