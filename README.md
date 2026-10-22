@@ -227,6 +227,7 @@ GitHub Actions runs Go tests and static checks, validates generated SQL, checks 
 | Product scope                  | [Product requirements](docs/01-product-requirements.md)                                                                 |
 | Monopoly Deal rules            | [Rule specification](docs/02-monopoly-deal-rules.md) and [engine traceability](docs/08-monopoly-engine-traceability.md) |
 | Trump rules and implementation | [Trump specification](docs/13-trump-specification.md)                                                                   |
+| In-game voice chat             | [Voice chat](docs/14-voice-chat.md)                                                                                     |
 | HTTP API and access model      | [API and architecture](docs/06-api-and-architecture.md)                                                                 |
 | Durable play and reconnect     | [Multiplayer and recovery](docs/09-multiplayer-and-recovery.md)                                                         |
 | Monitoring and backup          | [Operations](docs/10-operations.md)                                                                                     |

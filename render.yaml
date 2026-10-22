@@ -38,5 +38,13 @@ services:
         sync: false
       - key: SMTP_USERNAME
         sync: false
+      # Voice chat. VOICE_TURN_SECRET is a secret: set it in the dashboard,
+      # never in this file. Without TURN, voice still works for most players.
+      - key: VOICE_ENABLED
+        value: "1"
+      - key: VOICE_TURN_URLS
+        sync: false
+      - key: VOICE_TURN_SECRET
+        sync: false
       - key: SMTP_PASSWORD
         sync: false
