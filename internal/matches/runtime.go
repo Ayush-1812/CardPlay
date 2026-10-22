@@ -419,7 +419,7 @@ func (m *Module) Execute(ctx context.Context, matchID, userID string, gen int64,
 		if err != nil {
 			return err
 		}
-		tr, err := g.Apply(ctx, game.State{SchemaVersion: int(snap.SchemaVersion), Data: snap.State}, userID, cmd)
+		tr, err := g.Apply(game.WithNow(ctx, time.Now().UTC()), game.State{SchemaVersion: int(snap.SchemaVersion), Data: snap.State}, userID, cmd)
 		var rej game.Rejection
 		if errors.As(err, &rej) {
 			// Record the refusal so a retry of this command ID gets the same answer.
@@ -513,14 +513,50 @@ func (m *Module) Timeouts(ctx context.Context) error {
 	return nil
 }
 
+// Deadlines resolves waits that the game itself put a clock on -- Bluff's
+// challenge window, which is five seconds rather than the platform's two
+// minutes. The deadline lives in the game's state, so each candidate match
+// is read and asked; the query only narrows which ones to look at.
+func (m *Module) Deadlines(ctx context.Context) error {
+	paced := m.pacedGames()
+	if len(paced) == 0 {
+		return nil
+	}
+	ids, err := store.New(m.DB).PacedMatches(ctx, paced)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		// One stuck match must not hold up the others.
+		if err := m.tx(ctx, func(q *store.Queries) error { return m.timeoutMatch(ctx, q, id) }); err != nil && ctx.Err() == nil {
+			slog.Warn("deadline sweep failed", "match_id", id, "error", err.Error())
+		}
+	}
+	return nil
+}
+
+// pacedGames lists the registered games that keep a deadline of their own.
+func (m *Module) pacedGames() []string {
+	var out []string
+	for _, d := range m.Games.Catalog() {
+		g, ok := m.Games.Get(d.ID, d.RulesVersion)
+		if !ok {
+			continue
+		}
+		if _, paced := g.(game.Paced); paced {
+			out = append(out, d.ID)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 func (m *Module) timeoutMatch(ctx context.Context, q *store.Queries, id string) error {
 	mt, err := q.LockMatch(ctx, id)
 	if err != nil {
 		return notFound(err)
 	}
-	// Recheck under the lock: another instance may have moved already, a
-	// player may have moved at the last moment, or the match paused.
-	if mt.Status != "playing" || time.Since(mt.AwaitingSince) < m.TurnTimeout {
+	if mt.Status != "playing" {
 		return nil
 	}
 	g, ok := m.Games.Get(mt.GameID, mt.RulesVersion)
@@ -533,6 +569,22 @@ func (m *Module) timeoutMatch(ctx context.Context, q *store.Queries, id string) 
 		return err
 	}
 	state := game.State{SchemaVersion: int(snap.SchemaVersion), Data: snap.State}
+	// A game with a deadline of its own is judged by that deadline; anything
+	// else waits out the platform's turn timeout. Rechecked under the lock,
+	// because another instance may have resolved it already or a player may
+	// have acted at the last moment.
+	if paced, ok := g.(game.Paced); ok {
+		deadline, waiting := paced.Deadline(state)
+		if !waiting {
+			if m.TurnTimeout <= 0 || time.Since(mt.AwaitingSince) < m.TurnTimeout {
+				return nil
+			}
+		} else if time.Now().Before(deadline) {
+			return nil
+		}
+	} else if m.TurnTimeout <= 0 || time.Since(mt.AwaitingSince) < m.TurnTimeout {
+		return nil
+	}
 	revision := mt.Revision
 	var idle map[string]bool
 	// A decision is at most a handful of moves (accept, pay, place each
@@ -561,7 +613,7 @@ func (m *Module) timeoutMatch(ctx context.Context, q *store.Queries, id string) 
 			return err
 		}
 		cmd.Payload = payload
-		tr, err := g.Apply(ctx, state, mv.UserID, cmd)
+		tr, err := g.Apply(game.WithNow(ctx, time.Now().UTC()), state, mv.UserID, cmd)
 		if err != nil {
 			return fmt.Errorf("default %s move was rejected: %w", cmd.Kind, err)
 		}
@@ -623,7 +675,11 @@ func (m *Module) start(ctx context.Context, q *store.Queries, roomID, actor stri
 		}
 		participants = append(participants, game.Participant{UserID: mem.ID, Seat: i})
 	}
-	st, err := g.New(ctx, game.Setup{Participants: participants, Random: m.Random})
+	options, err := json.Marshal(map[string]any{"decks": int(room.DeckCount)})
+	if err != nil {
+		return "", err
+	}
+	st, err := g.New(ctx, game.Setup{Participants: participants, Random: m.Random, Options: options})
 	if err != nil {
 		return "", err
 	}

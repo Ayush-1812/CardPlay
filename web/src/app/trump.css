@@ -13,7 +13,13 @@
      controls. The page itself never scrolls, so the hand stays reachable on
      a 320px phone and on a 390px-tall phone held sideways. */
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "bar"
+    "voice"
+    "body"
+    "dock";
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 8px;
   height: 100dvh;
   max-height: 100dvh;
@@ -31,6 +37,7 @@
 /* The table scrolls here when a screen is too short to hold all of it;
    on anything roomier nothing scrolls at all. */
 .trump-body {
+  grid-area: body;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -44,13 +51,23 @@
   flex: 0 0 auto;
 }
 .trump-dock {
+  grid-area: dock;
   display: grid;
   gap: 6px;
   min-width: 0;
 }
+/* Voice sits under the trump call, where it is a control rather than
+   something covering the cards. It is capped and scrolls, so a full table
+   of players cannot push the hand off the screen. */
+.trump-table > .voice-bar {
+  grid-area: voice;
+  max-height: 26dvh;
+  overflow-y: auto;
+}
 
 /* ---- top bar ---- */
 .trump-bar {
+  grid-area: bar;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1033,19 +1050,17 @@
 @media (orientation: landscape) and (max-height: 560px) {
   .trump-table {
     grid-template-columns: minmax(0, 1fr) clamp(190px, 32%, 300px);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "bar bar"
+      "body voice"
+      "body dock";
+    grid-template-rows: auto auto minmax(0, 1fr);
     column-gap: 10px;
   }
-  .trump-bar {
-    grid-column: 1 / -1;
-  }
-  .trump-body {
-    grid-column: 1;
-    grid-row: 2;
+  .trump-table > .voice-bar {
+    max-height: 30dvh;
   }
   .trump-dock {
-    grid-column: 2;
-    grid-row: 2;
     grid-template-rows: minmax(0, 1fr) auto;
     min-height: 0;
   }

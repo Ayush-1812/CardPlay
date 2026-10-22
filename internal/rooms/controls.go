@@ -35,6 +35,10 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 		Capacity int32  `json:"capacity"`
 		TeamA    string `json:"team_a"`
 		TeamB    string `json:"team_b"`
+		// Decks is how many 52-card decks the game is played with. Games
+		// with a fixed deck ignore it; Bluff deals them all. Absent means
+		// leave it as it is, so renaming a room cannot quietly reset it.
+		Decks *int32 `json:"decks"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -53,6 +57,10 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, r, 400, "INVALID_REQUEST", "Team names are 1-24 characters of plain text")
 			return
 		}
+	}
+	if in.Decks != nil && (*in.Decks < 1 || *in.Decks > MaxDecks) {
+		httpx.Error(w, r, 400, "INVALID_REQUEST", fmt.Sprintf("Play with between 1 and %d decks", MaxDecks))
+		return
 	}
 	id := chi.URLParam(r, "roomID")
 	tx, err := m.DB.Begin(r.Context())
@@ -90,7 +98,11 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err = q.UpdateRoom(r.Context(), store.UpdateRoomParams{ID: id, Name: in.Name, Capacity: in.Capacity, TeamA: in.TeamA, TeamB: in.TeamB}); err == nil {
+	decks := room.DeckCount
+	if in.Decks != nil {
+		decks = int16(*in.Decks)
+	}
+	if err = q.UpdateRoom(r.Context(), store.UpdateRoomParams{ID: id, Name: in.Name, Capacity: in.Capacity, TeamA: in.TeamA, TeamB: in.TeamB, DeckCount: decks}); err == nil {
 		err = changed(r.Context(), q, id)
 	}
 	if err == nil {

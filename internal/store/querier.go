@@ -103,6 +103,10 @@ type Querier interface {
 	MyInvitations(ctx context.Context, userID string) ([]MyInvitationsRow, error)
 	MyRooms(ctx context.Context, userID string) ([]Room, error)
 	OldestActiveRoomMember(ctx context.Context, arg OldestActiveRoomMemberParams) (string, error)
+	// Live matches of games that set a deadline of their own, such as Bluff's
+	// challenge window. The deadline lives inside the game's state, so the
+	// caller reads each one and decides; this only narrows the set to look at.
+	PacedMatches(ctx context.Context, gameIds []string) ([]string, error)
 	PruneEndedSnapshots(ctx context.Context) error
 	PurgeChat(ctx context.Context) error
 	PurgeOldMatches(ctx context.Context) error

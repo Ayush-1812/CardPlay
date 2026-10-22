@@ -125,7 +125,7 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 }
 
 const createRoom = `-- name: CreateRoom :one
-INSERT INTO rooms(host_id,name,capacity,game_id,rules_version) VALUES($1,$2,$3,$4,$5) RETURNING id, host_id, name, game_id, rules_version, capacity, status, revision, created_at, team_a, team_b
+INSERT INTO rooms(host_id,name,capacity,game_id,rules_version) VALUES($1,$2,$3,$4,$5) RETURNING id, host_id, name, game_id, rules_version, capacity, status, revision, created_at, team_a, team_b, deck_count
 `
 
 type CreateRoomParams struct {
@@ -157,6 +157,7 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 		&i.CreatedAt,
 		&i.TeamA,
 		&i.TeamB,
+		&i.DeckCount,
 	)
 	return i, err
 }
@@ -289,7 +290,7 @@ func (q *Queries) IsRoomBanned(ctx context.Context, arg IsRoomBannedParams) (boo
 }
 
 const lockRoom = `-- name: LockRoom :one
-SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at, team_a, team_b FROM rooms WHERE id=$1 FOR UPDATE
+SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at, team_a, team_b, deck_count FROM rooms WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockRoom(ctx context.Context, id string) (Room, error) {
@@ -307,6 +308,7 @@ func (q *Queries) LockRoom(ctx context.Context, id string) (Room, error) {
 		&i.CreatedAt,
 		&i.TeamA,
 		&i.TeamB,
+		&i.DeckCount,
 	)
 	return i, err
 }
@@ -422,7 +424,7 @@ func (q *Queries) MyInvitations(ctx context.Context, userID string) ([]MyInvitat
 }
 
 const myRooms = `-- name: MyRooms :many
-SELECT r.id, r.host_id, r.name, r.game_id, r.rules_version, r.capacity, r.status, r.revision, r.created_at, r.team_a, r.team_b FROM rooms r JOIN room_members m ON m.room_id=r.id WHERE m.user_id=$1 AND r.status<>'closed' ORDER BY r.created_at DESC LIMIT 100
+SELECT r.id, r.host_id, r.name, r.game_id, r.rules_version, r.capacity, r.status, r.revision, r.created_at, r.team_a, r.team_b, r.deck_count FROM rooms r JOIN room_members m ON m.room_id=r.id WHERE m.user_id=$1 AND r.status<>'closed' ORDER BY r.created_at DESC LIMIT 100
 `
 
 func (q *Queries) MyRooms(ctx context.Context, userID string) ([]Room, error) {
@@ -446,6 +448,7 @@ func (q *Queries) MyRooms(ctx context.Context, userID string) ([]Room, error) {
 			&i.CreatedAt,
 			&i.TeamA,
 			&i.TeamB,
+			&i.DeckCount,
 		); err != nil {
 			return nil, err
 		}
@@ -553,7 +556,7 @@ func (q *Queries) RevokeTargetRoomInvitations(ctx context.Context, arg RevokeTar
 }
 
 const room = `-- name: Room :one
-SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at, team_a, team_b FROM rooms WHERE id=$1
+SELECT id, host_id, name, game_id, rules_version, capacity, status, revision, created_at, team_a, team_b, deck_count FROM rooms WHERE id=$1
 `
 
 func (q *Queries) Room(ctx context.Context, id string) (Room, error) {
@@ -571,6 +574,7 @@ func (q *Queries) Room(ctx context.Context, id string) (Room, error) {
 		&i.CreatedAt,
 		&i.TeamA,
 		&i.TeamB,
+		&i.DeckCount,
 	)
 	return i, err
 }
@@ -674,15 +678,16 @@ func (q *Queries) SwapSeats(ctx context.Context, arg SwapSeatsParams) error {
 }
 
 const updateRoom = `-- name: UpdateRoom :exec
-UPDATE rooms SET name=$2,capacity=$3,team_a=$4,team_b=$5 WHERE id=$1
+UPDATE rooms SET name=$2,capacity=$3,team_a=$4,team_b=$5,deck_count=$6 WHERE id=$1
 `
 
 type UpdateRoomParams struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Capacity int32  `json:"capacity"`
-	TeamA    string `json:"team_a"`
-	TeamB    string `json:"team_b"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Capacity  int32  `json:"capacity"`
+	TeamA     string `json:"team_a"`
+	TeamB     string `json:"team_b"`
+	DeckCount int16  `json:"deck_count"`
 }
 
 func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) error {
@@ -692,6 +697,7 @@ func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) error {
 		arg.Capacity,
 		arg.TeamA,
 		arg.TeamB,
+		arg.DeckCount,
 	)
 	return err
 }

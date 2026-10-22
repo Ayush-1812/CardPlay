@@ -688,6 +688,11 @@ func (h *Hub) Run(ctx context.Context) {
 	defer cleanup.Stop()
 	presence := time.NewTicker(5 * time.Second)
 	defer presence.Stop()
+	// Games that keep their own clock -- Bluff's five-second challenge
+	// window -- are swept every second, so a window closes when it says it
+	// will rather than on the next five-second sweep.
+	deadlines := time.NewTicker(time.Second)
+	defer deadlines.Stop()
 	idleRooms := time.NewTicker(time.Minute)
 	defer idleRooms.Stop()
 	q := store.New(h.DB)
@@ -715,6 +720,10 @@ func (h *Hub) Run(ctx context.Context) {
 		case <-idleRooms.C:
 			if _, err := h.Rooms.DeleteIdle(ctx); err != nil && ctx.Err() == nil {
 				slog.Warn("idle room cleanup failed", "error_type", fmt.Sprintf("%T", err))
+			}
+		case <-deadlines.C:
+			if err := h.Matches.Deadlines(ctx); err != nil && ctx.Err() == nil {
+				slog.Warn("deadline sweep failed", "error_type", fmt.Sprintf("%T", err))
 			}
 		case <-presence.C:
 			_ = h.Rooms.TransferAbsentHosts(ctx)

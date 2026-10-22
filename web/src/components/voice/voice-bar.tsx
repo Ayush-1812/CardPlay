@@ -4,13 +4,26 @@
 // to what they hear, in one bar that fits a phone and reads to a screen
 // reader. Voice is opt-in: nothing opens the microphone until "Join voice".
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { VoiceMode, VoiceStatus } from "./use-voice";
 import type { VoiceParticipant, VoicePolicy } from "../../lib/voice";
 
 // The key held for push-to-talk. V is away from the game's own controls and
 // is not a browser shortcut.
 const PTT_KEY = "v";
+
+// What to say about one player's audio. A connection still coming up is
+// worth saying out loud: it is the difference between "they are quiet" and
+// "you cannot hear them".
+function linkWord(
+  state: RTCPeerConnectionState | undefined,
+  p: VoiceParticipant,
+): string {
+  if (state === "connected") return p.muted ? "muted" : "";
+  if (state === "failed" || state === "disconnected") return "reconnecting…";
+  if (state === "closed") return "not connected";
+  return "connecting…";
+}
 
 export type VoiceBarProps = {
   status: VoiceStatus;
@@ -25,6 +38,9 @@ export type VoiceBarProps = {
   blockedAudio: boolean;
   relayAvailable: boolean;
   volumes: Record<string, number>;
+  // What each peer connection is doing, so a player who cannot hear
+  // someone can see whether that link is still coming up.
+  links: Record<string, RTCPeerConnectionState>;
   selfID: string;
   name: (userID: string) => string;
   join: () => void;
@@ -50,6 +66,7 @@ export function VoiceBar({
   blockedAudio,
   relayAvailable,
   volumes,
+  links,
   selfID,
   name,
   join,
@@ -63,6 +80,9 @@ export function VoiceBar({
 }: VoiceBarProps) {
   const live = status === "live";
   const held = useRef(false);
+  // The per-player volumes are a settings panel, not something to keep on
+  // screen over the cards. Who is talking is shown either way.
+  const [volumesOpen, setVolumesOpen] = useState(false);
 
   // Push-to-talk on the keyboard. The key is ignored while typing, so it
   // cannot swallow a letter meant for the chat box.
@@ -173,6 +193,16 @@ export function VoiceBar({
             {talking ? "Talking…" : "Hold to talk"}
           </button>
         )}
+        {others.length > 0 && (
+          <button
+            type="button"
+            className="voice-btn"
+            aria-expanded={volumesOpen}
+            onClick={() => setVolumesOpen((v) => !v)}
+          >
+            {volumesOpen ? "Hide volumes" : "Volumes"}
+          </button>
+        )}
         <button type="button" className="voice-btn leave" onClick={leave}>
           Leave voice
         </button>
@@ -193,14 +223,43 @@ export function VoiceBar({
           {error}
         </p>
       )}
-      {!relayAvailable && (
-        <p className="voice-note">
-          No relay is configured, so a strict network may block voice. The game
-          is unaffected.
-        </p>
+      {!relayAvailable &&
+        Object.values(links).some(
+          (state) => state === "failed" || state === "disconnected",
+        ) && (
+          <p className="voice-note">
+            A connection is struggling and there is no relay configured, which a
+            strict network needs. The game is unaffected.
+          </p>
+        )}
+
+      {/* Collapsed: who is here and who is talking, on one line. */}
+      {!volumesOpen && others.length > 0 && (
+        <ul className="voice-chips" aria-label="In voice">
+          {others.map((p) => (
+            <li
+              key={p.user_id}
+              className={`voice-chip ${p.speaking && !p.muted ? "speaking" : ""} ${p.muted ? "muted" : ""}`}
+            >
+              <span
+                className={`voice-dot ${p.speaking && !p.muted ? "speaking" : ""}`}
+                aria-hidden="true"
+              />
+              <span className="voice-chip-name">{name(p.user_id)}</span>
+              <span className="sr-only">
+                {linkWord(links[p.user_id], p) || "connected"}
+              </span>
+              {linkWord(links[p.user_id], p) && (
+                <span className="voice-chip-flag">
+                  {linkWord(links[p.user_id], p)}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
 
-      <ul className="voice-people">
+      <ul className={`voice-people ${volumesOpen ? "" : "closed"}`}>
         {others.length === 0 && (
           <li className="voice-alone">
             Nobody else has joined voice yet. They each need to join from their
@@ -215,7 +274,7 @@ export function VoiceBar({
             />
             <span className="voice-name">{name(p.user_id)}</span>
             <span className="voice-flags">
-              {p.muted ? "muted" : p.speaking ? "speaking" : ""}
+              {linkWord(links[p.user_id], p)}
               {p.deafened ? " · deafened" : ""}
             </span>
             <label className="voice-volume">

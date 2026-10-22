@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"time"
 )
 
 var ErrNotReady = errors.New("game implementation is not available in the foundation release")
@@ -26,6 +27,11 @@ type Participant struct {
 type Setup struct {
 	Participants []Participant
 	Random       io.Reader
+	// Options are the room's settings for this game, as JSON. A game that
+	// has none ignores it; Bluff reads how many decks to deal. Anything a
+	// game does not understand is left alone, so a room setting can be
+	// added without every engine knowing about it.
+	Options json.RawMessage
 }
 type State struct {
 	SchemaVersion int
@@ -97,6 +103,36 @@ type TimeoutPolicy interface {
 // implement it leaves chat open.
 type ChatPolicy interface {
 	ChatOpen(State) (bool, error)
+}
+
+// nowKey carries the server's clock into a game. A game that needs a
+// deadline -- Bluff's challenge window -- reads it instead of calling
+// time.Now itself, so the platform decides what "now" means and the engine
+// stays something a test can drive.
+type nowKey struct{}
+
+// WithNow stamps the time a command is being applied at.
+func WithNow(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, nowKey{}, t)
+}
+
+// Now reads the stamped time, falling back to the real clock so a caller
+// that forgets is late rather than wrong.
+func Now(ctx context.Context) time.Time {
+	if t, ok := ctx.Value(nowKey{}).(time.Time); ok {
+		return t
+	}
+	return time.Now().UTC()
+}
+
+// Paced is implemented by games whose wait has a deadline of its own, kept
+// in the state and shorter than the platform's turn timeout. The platform
+// sweeps expired deadlines and then asks TimeoutPolicy what to do about
+// them, so a game that implements this implements that as well.
+type Paced interface {
+	// Deadline reports when the current wait expires. false means this
+	// state is not waiting on a clock.
+	Deadline(State) (time.Time, bool)
 }
 
 // VoicePolicyState is a game's answer about voice chat. Reason is shown to

@@ -48,7 +48,12 @@ export function RoomScreen({
   onStart: () => void;
   onLeave: () => void;
   onClose: () => void;
-  onUpdate: (name: string, capacity: number, teams?: [string, string]) => void;
+  onUpdate: (
+    name: string,
+    capacity: number,
+    teams?: [string, string],
+    decks?: number,
+  ) => void;
   onSeat: (userID: string, seat: number) => void;
   onMakeHost: (id: string, handle: string) => void;
   onKick: (id: string, handle: string) => void;
@@ -69,6 +74,11 @@ export function RoomScreen({
   const full = view.members.length >= room.capacity;
   // Games that pair seats into teams; Trump is the only one so far.
   const teamGame = room.game_id === "trump";
+  // Bluff is the one game whose deck count is a choice; the others are
+  // fixed by their rules.
+  const deckGame = room.game_id === "bluff";
+  // Seats follow the game rather than one hardcoded list.
+  const seatOptions = deckGame ? [3, 4, 5, 6] : teamGame ? [4] : [2, 3, 4, 5];
   const teamLabel = (team: number) =>
     (team === 0 ? room.team_a : room.team_b)?.trim() || DEFAULT_TEAM[team];
   const everyoneReady =
@@ -378,6 +388,7 @@ export function RoomScreen({
                     teamGame
                       ? [room.team_a ?? "", room.team_b ?? ""]
                       : undefined,
+                    deckGame ? Number(data.get("decks")) : undefined,
                   );
                 }}
               >
@@ -398,13 +409,33 @@ export function RoomScreen({
                     key={`${room.id}:${room.capacity}`}
                     defaultValue={room.capacity}
                   >
-                    {[2, 3, 4, 5].map((n) => (
+                    {seatOptions.map((n) => (
                       <option key={n} value={n}>
                         {n} players
                       </option>
                     ))}
                   </select>
                 </label>
+                {deckGame && (
+                  <label className="field">
+                    <span>Decks</span>
+                    <select
+                      name="decks"
+                      key={`${room.id}:decks:${room.deck_count}`}
+                      defaultValue={room.deck_count ?? 1}
+                    >
+                      {[1, 2, 3, 4].map((n) => (
+                        <option key={n} value={n}>
+                          {n} deck{n === 1 ? "" : "s"} · {n * 52} cards
+                        </option>
+                      ))}
+                    </select>
+                    <small className="field-note">
+                      More decks mean more cards of every rank, so a play may
+                      claim up to {4 * (room.deck_count ?? 1)} at once.
+                    </small>
+                  </label>
+                )}
                 <button className="btn-ghost" disabled={busy}>
                   Save
                 </button>

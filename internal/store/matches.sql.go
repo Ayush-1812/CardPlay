@@ -528,6 +528,34 @@ func (q *Queries) MatchStateFor(ctx context.Context, arg MatchStateForParams) (M
 	return i, err
 }
 
+const pacedMatches = `-- name: PacedMatches :many
+SELECT id FROM matches WHERE status='playing' AND game_id = ANY($1::text[])
+ORDER BY awaiting_since LIMIT 50
+`
+
+// Live matches of games that set a deadline of their own, such as Bluff's
+// challenge window. The deadline lives inside the game's state, so the
+// caller reads each one and decides; this only narrows the set to look at.
+func (q *Queries) PacedMatches(ctx context.Context, gameIds []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, pacedMatches, gameIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneEndedSnapshots = `-- name: PruneEndedSnapshots :exec
 DELETE FROM game_snapshots s USING matches m
 WHERE m.id=s.match_id AND m.status IN ('finished','abandoned') AND s.revision < m.revision

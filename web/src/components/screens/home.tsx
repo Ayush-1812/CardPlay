@@ -46,6 +46,16 @@ export const GAMES: GameEntry[] = [
     suit: "♥",
     seats: 4,
   },
+  {
+    id: "bluff",
+    name: "Bluff",
+    blurb:
+      "Play to the called rank whether you hold it or not. Anyone can call it, and the whole pile goes to whoever was wrong.",
+    players: "3-6 players",
+    playable: true,
+    suit: "♦",
+    seats: 4,
+  },
 ];
 
 export function GamesScreen({
