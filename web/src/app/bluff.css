@@ -1,0 +1,452 @@
+/* The Bluff table. Phone first: one column that fits 320px, with the hand
+   and the controls docked where they can always be reached, widening into
+   a roomier table at 768px. */
+
+.bluff-table {
+  --felt: #184a58;
+  --felt-dark: #0e3340;
+  --line: rgba(239, 192, 73, 0.22);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  padding: max(8px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    calc(8px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  background: radial-gradient(
+    120% 80% at 50% 0%,
+    var(--felt) 0%,
+    var(--felt-dark) 100%
+  );
+  color: var(--cream, #f3ead6);
+}
+.bluff-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.bluff-body > * {
+  flex: 0 0 auto;
+}
+.bluff-dock {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* ---- top bar ---- */
+.bluff-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bluff-bar h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+.bluff-sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  opacity: 0.8;
+}
+.bluff-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* The call is the one thing nobody may miss. */
+.rank-call {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--accent, #efc049);
+  background: rgba(239, 192, 73, 0.16);
+  font-size: 17px;
+  font-weight: 800;
+}
+.rank-call-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+/* ---- the other players ---- */
+.opponents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.opponent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.28);
+}
+.opponent.turn {
+  outline: 2px solid var(--accent, #efc049);
+  outline-offset: 1px;
+}
+.opponent.away {
+  opacity: 0.65;
+}
+.opponent-name {
+  font-weight: 700;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.opponent-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.opponent-flags {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.flag {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.flag.away {
+  background: #6b2525;
+}
+.flag.pending {
+  background: var(--accent, #efc049);
+  color: #1b1b1b;
+  font-weight: 700;
+}
+
+/* ---- the middle ---- */
+.middle {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px dashed var(--line);
+  background: rgba(0, 0, 0, 0.18);
+}
+.pile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 86px;
+  width: 100%;
+}
+.pile-layer {
+  position: absolute;
+  transform: translate(calc(var(--i) * 1.5px), calc(var(--i) * -1.5px))
+    rotate(calc(var(--i) * 1.5deg));
+}
+.pile-empty {
+  font-size: 12px;
+  opacity: 0.6;
+}
+.pile-count,
+.claim {
+  margin: 0;
+  font-size: 13px;
+  text-align: center;
+}
+.claim {
+  font-weight: 700;
+}
+
+/* ---- the challenge window ---- */
+.window {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+}
+.countdown {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.countdown-number {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.countdown-label {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.countdown-bar {
+  display: block;
+  width: min(260px, 100%);
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.countdown-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent, #efc049);
+  transition: width 250ms linear;
+}
+
+/* ---- a resolved challenge ---- */
+.result {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.3);
+}
+.result.truthful {
+  border-color: #4f9d69;
+}
+.result.bluffed {
+  border-color: #c2553f;
+}
+.result-line,
+.result-collect {
+  margin: 0;
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.4;
+}
+.revealed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.winner {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--accent, #efc049);
+}
+
+/* ---- cards ---- */
+.bcard {
+  --cw: 46px;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: var(--cw);
+  height: calc(var(--cw) * 1.39);
+  border-radius: 7px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  background: #fbf7ec;
+  color: #15181d;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.bcard-sm {
+  --cw: 26px;
+}
+.bcard-md {
+  --cw: clamp(34px, 8.5vmin, 46px);
+}
+.bcard-lg {
+  --cw: clamp(38px, 10.5vmin, 56px);
+}
+.bcard-rank {
+  font-size: calc(var(--cw) * 0.46);
+  font-weight: 800;
+}
+.bcard-suit {
+  font-size: calc(var(--cw) * 0.3);
+  opacity: 0.85;
+}
+.bcard.red {
+  color: #a81f2b;
+}
+.bcard.black {
+  color: #15181d;
+}
+.bcard.dimmed {
+  opacity: 0.5;
+}
+.bcard-back {
+  background: repeating-linear-gradient(45deg, #27566b 0 5px, #163a49 5px 10px);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* ---- your hand ---- */
+.hand-status {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.refusal {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: #5b2525;
+  color: #ffd9d9;
+  font-size: 12px;
+}
+.hand-rail {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  gap: 4px;
+  margin: 0;
+  padding: 6px 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.hand-card {
+  background: none;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  border-radius: 9px;
+  min-height: 44px;
+  transition: transform 120ms ease;
+}
+.hand-card:disabled {
+  cursor: default;
+}
+.hand-card:focus-visible {
+  outline: 3px solid var(--accent, #efc049);
+  outline-offset: 2px;
+}
+/* A chosen card lifts. Nothing marks a card as matching the call or not:
+   that is the whole game. */
+.hand-card.chosen {
+  transform: translateY(-8px);
+}
+.hand-card.chosen .bcard {
+  outline: 3px solid var(--accent, #efc049);
+  outline-offset: 1px;
+}
+.hand-empty {
+  font-size: 12px;
+  opacity: 0.8;
+  padding: 10px 2px;
+}
+.bluff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.bluff-actions button {
+  min-height: 40px;
+}
+.bluff-actions .btn-gold,
+.bluff-actions .btn-danger {
+  flex: 1 1 auto;
+}
+.bluff-chat {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  background: var(--felt-dark);
+  padding: max(10px, env(safe-area-inset-top)) 10px
+    calc(10px + env(safe-area-inset-bottom));
+  overflow: auto;
+}
+.bluff-table .chat-close {
+  min-height: 40px;
+  margin-bottom: 8px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.3);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+/* ---- wider screens ---- */
+@media (min-width: 768px) {
+  .bluff-table {
+    padding: 14px 22px;
+    gap: 14px;
+  }
+  .bluff-bar h1 {
+    font-size: 22px;
+  }
+  .opponents {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+  .middle {
+    padding: 16px;
+  }
+  .pile {
+    min-height: 120px;
+  }
+  .hand-rail {
+    justify-content: safe center;
+  }
+}
+
+/* ---- short screens: a phone held sideways ---- */
+@media (max-height: 620px) {
+  .bluff-table {
+    gap: 6px;
+  }
+  .bluff-bar h1 {
+    font-size: 15px;
+  }
+  .bluff-sub {
+    display: none;
+  }
+  .middle {
+    padding: 6px;
+    gap: 4px;
+  }
+  .pile {
+    min-height: 64px;
+  }
+  .countdown-number {
+    font-size: 20px;
+  }
+  .hand-rail {
+    padding: 2px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hand-card,
+  .countdown-bar > span {
+    transition: none;
+  }
+}

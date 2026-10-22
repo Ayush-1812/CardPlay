@@ -24,11 +24,16 @@ import { ChatPanel } from "./chat";
 // game at a time, so neither table belongs in the bundle that serves the
 // entry screen and the lobby. Loading them on demand keeps the first visit
 // small, which is what a phone on a slow connection feels.
+import type { BluffMatch } from "../lib/bluff";
 import { useVoice, type VoiceFrame } from "./voice/use-voice";
 import { VoiceBar } from "./voice/voice-bar";
 
 const GameTable = dynamic(
   () => import("./game-table").then((m) => m.GameTable),
+  { ssr: false, loading: () => <TableLoading /> },
+);
+const BluffTable = dynamic(
+  () => import("./bluff/bluff-table").then((m) => m.BluffTable),
   { ssr: false, loading: () => <TableLoading /> },
 );
 const TrumpTable = dynamic(
@@ -866,6 +871,36 @@ export function Dashboard() {
     );
 
   // The live table takes the whole screen.
+  if (
+    user &&
+    selected &&
+    showTable &&
+    roomMatch &&
+    roomMatch.game_id === "bluff"
+  ) {
+    return (
+      <div className="app-table">
+        <BluffTable
+          state={roomMatch as unknown as BluffMatch}
+          busy={gameBusy || replaced}
+          roomName={view?.room.name}
+          connection={connection}
+          alerts={alertsSection}
+          chat={chatSection}
+          voice={voiceSection}
+          unread={unread}
+          onCommand={command}
+          onLeave={() =>
+            void run(async () => {
+              await api(`/matches/${roomMatch.match_id}/leave`, "POST");
+              setNotice("You left the match. It ended with no winner.");
+            })
+          }
+        />
+      </div>
+    );
+  }
+
   if (
     user &&
     selected &&
