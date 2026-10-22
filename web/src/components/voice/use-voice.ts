@@ -380,7 +380,7 @@ export function useVoice({
       stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
     } catch (e) {
       setStatus("error");
-      setError(micErrorMessage(e));
+      setError(await micErrorMessage(e));
       return;
     }
     streamRef.current = stream;

@@ -289,8 +289,10 @@ test.describe.serial("voice is scoped and optional", () => {
       p.page.getByRole("heading", { level: 1, name: /'s table$/ }),
     ).toBeVisible();
     await voice(p).getByRole("button", { name: "Join voice" }).click();
+    // Either refusal is fine to show; what matters is that it names the
+    // layer that said no and the game carries on.
     await expect(voice(p)).toContainText(
-      /blocked the microphone|could not be opened/,
+      /blocked from using your microphone|blocking the microphone|could not be opened/,
       {
         timeout: 20_000,
       },
