@@ -171,6 +171,12 @@ func (m *Module) Join(ctx context.Context, roomID, actor, owner string) ([]Parti
 	if !ok {
 		return nil, &Error{"NOT_FOUND", 404, "Room not found"}
 	}
+	return m.admit(roomID, actor, owner)
+}
+
+// admit puts an authorized player in the channel. Join checks membership
+// first; this half is the registry, and nothing here touches the database.
+func (m *Module) admit(roomID, actor, owner string) ([]Participant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.rooms == nil {

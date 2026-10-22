@@ -183,6 +183,37 @@ func TestChatGate(t *testing.T) {
 	}
 }
 
+// Voice closes for exactly the window chat does: the trump is chosen from
+// cards nobody else may learn about, and speech would carry the same hint.
+func TestVoiceGate(t *testing.T) {
+	s := fixture(t, 8)
+	st, err := encode(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := Module{}.VoiceOpen(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Open {
+		t.Fatal("voice must be closed during selection")
+	}
+	if policy.Reason == "" {
+		t.Fatal("a closed microphone must say why")
+	}
+	after, err := encode(pickTrump(t, s, Spades))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err = Module{}.VoiceOpen(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.Open {
+		t.Fatal("voice must reopen once play starts")
+	}
+}
+
 // Spec rules 22-25: play follows seat order, the lead suit must be followed,
 // and trumping is never compulsory.
 func TestPlayingATrick(t *testing.T) {
