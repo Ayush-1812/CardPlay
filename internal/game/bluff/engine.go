@@ -182,9 +182,17 @@ type CallBluff struct {
 	PlayID string `json:"play_id"`
 }
 
-func (PlayCards) isAction()  {}
-func (AcceptPlay) isAction() {}
-func (CallBluff) isAction()  {}
+// CloseWindow ends a challenge window whose deadline has passed, which is
+// what silence means. The platform sends it when it sweeps the deadline; it
+// is refused while the window is still open, so nobody can cut it short.
+type CloseWindow struct {
+	PlayID string `json:"play_id"`
+}
+
+func (PlayCards) isAction()   {}
+func (AcceptPlay) isAction()  {}
+func (CallBluff) isAction()   {}
+func (CloseWindow) isAction() {}
 
 // Apply validates and applies one action by seat at the time the platform
 // stamped on the command. It works on a clone and returns the new state
@@ -214,7 +222,9 @@ func (s *State) apply(seat int, a Action, now time.Time) ([]Event, error) {
 	case AcceptPlay:
 		return s.accept(seat, action.PlayID, now)
 	case CallBluff:
-		return s.challenge(seat, action.PlayID)
+		return s.challenge(seat, action.PlayID, now)
+	case CloseWindow:
+		return s.expire(action.PlayID, now)
 	}
 	return nil, reject(CodeInvalidInput, "unknown action")
 }
@@ -291,6 +301,9 @@ func (s *State) accept(seat int, playID string, now time.Time) ([]Event, error) 
 	if s.Accepted[seat] {
 		return nil, reject(CodeNotEligible, "you have already accepted this play")
 	}
+	if now.After(s.Deadline) {
+		return nil, reject(CodeStalePlay, "the challenge window has closed")
+	}
 	s.Accepted[seat] = true
 	events := []Event{{Kind: "accepted", Audience: Public, Data: map[string]any{
 		"play_id": s.Last.ID, "seat": seat,
@@ -302,18 +315,23 @@ func (s *State) accept(seat int, playID string, now time.Time) ([]Event, error) 
 	return append(events, s.closeWindow(now)...), nil
 }
 
-// Expire closes a challenge window whose deadline has passed. Silence is
-// acceptance, so this is the same ending as everyone accepting. It is the
-// platform's to call, which is why it takes the time.
-func (s *State) Expire(now time.Time) ([]Event, error) {
+// expire closes a challenge window whose deadline has passed. Silence is
+// acceptance, so this ends exactly as everyone accepting would.
+func (s *State) expire(playID string, now time.Time) ([]Event, error) {
 	if s.Phase != PhaseChallenge || s.Last == nil {
 		return nil, reject(CodeWrongPhase, "there is no play to answer")
+	}
+	if playID != "" && playID != s.Last.ID {
+		return nil, reject(CodeStalePlay, "that play has already been resolved")
 	}
 	if now.Before(s.Deadline) {
 		return nil, reject(CodeWrongPhase, "the challenge window is still open")
 	}
 	return s.closeWindow(now), nil
 }
+
+// Expire is the same thing for a caller that holds the state directly.
+func (s *State) Expire(now time.Time) ([]Event, error) { return s.expire("", now) }
 
 // closeWindow ends an unchallenged play: the cards stay face down, nobody
 // learns whether the claim was true, and the next seat plays the next rank.
@@ -332,9 +350,14 @@ func (s *State) closeWindow(_ time.Time) []Event {
 
 // challenge resolves a call. Only the latest batch is revealed, whatever
 // else the pile holds.
-func (s *State) challenge(seat int, playID string) ([]Event, error) {
+func (s *State) challenge(seat int, playID string, now time.Time) ([]Event, error) {
 	if s.Phase != PhaseChallenge || s.Last == nil {
 		return nil, reject(CodeWrongPhase, "there is no play to challenge")
+	}
+	// Late is late, by the server's clock: a challenge that arrives after
+	// the deadline has missed its window, whatever the client thought.
+	if now.After(s.Deadline) {
+		return nil, reject(CodeStalePlay, "the challenge window has closed")
 	}
 	if playID != "" && playID != s.Last.ID {
 		return nil, reject(CodeStalePlay, "that play has already been resolved")

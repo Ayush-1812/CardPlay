@@ -94,3 +94,10 @@ UPDATE rooms SET status=$2,revision=revision+1 WHERE id=$1;
 SELECT m.id,m.game_id,m.rules_version,s.schema_version,s.state FROM matches m
 JOIN LATERAL (SELECT gs.schema_version,gs.state FROM game_snapshots gs WHERE gs.match_id=m.id ORDER BY gs.revision DESC LIMIT 1) s ON true
 WHERE m.room_id=$1 AND m.status IN ('playing','paused') ORDER BY m.created_at DESC LIMIT 1;
+
+-- name: PacedMatches :many
+-- Live matches of games that set a deadline of their own, such as Bluff's
+-- challenge window. The deadline lives inside the game's state, so the
+-- caller reads each one and decides; this only narrows the set to look at.
+SELECT id FROM matches WHERE status='playing' AND game_id = ANY(sqlc.arg(game_ids)::text[])
+ORDER BY awaiting_since LIMIT 50;
