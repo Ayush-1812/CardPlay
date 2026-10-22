@@ -65,11 +65,12 @@ export type BluffMatch = {
   winner_id?: string | null;
   end_reason?: string | null;
   received_at?: number;
-  players: {
+  participants: {
     user_id: string;
     seat: number;
     display_name: string;
-    disconnected_at?: string | null;
+    connected: boolean;
+    absent_since?: string;
   }[];
   view: { public: BluffPublic; self: BluffSelf };
 };

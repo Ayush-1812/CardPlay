@@ -77,11 +77,11 @@ export function BluffTable({
   const refused = refusal && refusal.play === here ? refusal.text : null;
   const answered = sent?.play === here;
 
+  const seated = state.participants ?? [];
   const nameOf = (seat: number) =>
-    state.players.find((p) => p.seat === seat)?.display_name ??
-    `Seat ${seat + 1}`;
+    seated.find((p) => p.seat === seat)?.display_name ?? `Seat ${seat + 1}`;
   const isAway = (seat: number) =>
-    !!state.players.find((p) => p.seat === seat)?.disconnected_at;
+    seated.find((p) => p.seat === seat)?.connected === false;
 
   const myTurn = self.may_play && playing && !offline;
   const canAnswer = self.may_answer && playing && !offline;
