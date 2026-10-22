@@ -7,6 +7,7 @@ import (
 	"cardplay/internal/chat"
 	"cardplay/internal/config"
 	"cardplay/internal/game"
+	"cardplay/internal/game/bluff"
 	"cardplay/internal/game/monopoly"
 	"cardplay/internal/game/trump"
 	"cardplay/internal/httpx"
@@ -38,7 +39,7 @@ type App struct {
 
 func New(pool *pgxpool.Pool, c config.Config) *App {
 	auth := &accounts.Module{DB: pool, Config: c}
-	games := game.NewRegistry(monopoly.Module{}, trump.Module{})
+	games := game.NewRegistry(monopoly.Module{}, trump.Module{}, bluff.Module{})
 	rm := &rooms.Module{DB: pool, Games: games}
 	friends := &social.Module{DB: pool}
 	ch := &chat.Module{DB: pool}
