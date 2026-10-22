@@ -1,7 +1,6 @@
 package trump
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -15,7 +14,7 @@ func newMatch(t *testing.T) (game.State, *State) {
 	// Seats arrive in any order; the module sorts them.
 	st, err := Module{}.New(context.Background(), game.Setup{
 		Participants: []game.Participant{{UserID: "u2", Seat: 2}, {UserID: "u0", Seat: 0}, {UserID: "u3", Seat: 3}, {UserID: "u1", Seat: 1}},
-		Random:       bytes.NewReader(bytes.Repeat([]byte{31}, SeedSize)),
+		Random:       stream(31),
 	})
 	if err != nil {
 		t.Fatal(err)

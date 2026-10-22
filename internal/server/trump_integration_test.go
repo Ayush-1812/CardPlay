@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -469,10 +470,12 @@ func TestTrumpLiveMatch(t *testing.T) {
 		if err := json.Unmarshal(row.State, &full); err != nil {
 			t.Fatal(err)
 		}
-		if len(full.Seed) == 0 {
-			t.Fatal("the stored state should carry a seed")
+		// Nothing in the stored state predicts a future deal: each round is
+		// shuffled from the operating system when it is dealt, so there is no
+		// seed to find here or to leak to a player.
+		if strings.Contains(string(row.State), "\"seed\"") {
+			t.Fatal("the stored state still carries a shuffle seed")
 		}
-		seed := seedHex(full.Seed)
 		for i, u := range users {
 			seat := seatOf[u]
 			status, body := e.do(a, "GET", "/api/v1/matches/"+matchID, tokens[i], nil)
@@ -499,8 +502,8 @@ func TestTrumpLiveMatch(t *testing.T) {
 					t.Fatalf("seat %d can see the undealt %s", seat, id)
 				}
 			}
-			if strings.Contains(text, seed) || strings.Contains(text, "\"seed\"") {
-				t.Fatalf("seat %d received the shuffle seed", seat)
+			if strings.Contains(text, "\"seed\"") {
+				t.Fatalf("seat %d received a shuffle seed", seat)
 			}
 			// Its own hand must be there, so the check is not vacuous.
 			own := full.Players[seat].Hand
@@ -509,12 +512,24 @@ func TestTrumpLiveMatch(t *testing.T) {
 			}
 		}
 	})
-	t.Run("a restart recovers the match", func(t *testing.T) {
+	t.Run("a restart recovers the match without redealing", func(t *testing.T) {
+		// The hand this player holds before the restart must come back
+		// exactly: a reconnection restores a deal, it does not make one.
+		before := e.dial(a, tokenBySeat[partner])
+		before.send(map[string]any{"type": "match.subscribe", "match_id": matchID})
+		was, _ := before.state("before restart", func(p map[string]any) bool { return p["view"] != nil })
+		hand := fmt.Sprint(selfOf(was)["hand"])
+		if hand == "[]" {
+			t.Fatal("the player should be holding cards")
+		}
 		a.stop()
 		b := startInstance(t, pool, c)
 		client := e.dial(b, tokenBySeat[partner])
 		client.send(map[string]any{"type": "match.subscribe", "match_id": matchID})
 		after, _ := client.state("after restart", func(p map[string]any) bool { return p["view"] != nil })
+		if got := fmt.Sprint(selfOf(after)["hand"]); got != hand {
+			t.Fatalf("the hand changed across the restart: before %s, after %s", hand, got)
+		}
 		committed, err := e.q.Match(ctx, matchID)
 		if err != nil {
 			t.Fatal(err)
@@ -538,9 +553,4 @@ func slicesContains(list []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func seedHex(seed []byte) string {
-	b, _ := json.Marshal(seed)
-	return strings.Trim(string(b), `"`)
 }

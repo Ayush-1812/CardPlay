@@ -1,16 +1,28 @@
 package trump
 
 import (
-	"bytes"
 	"crypto/rand"
+	"io"
+	mrand "math/rand/v2"
 	"slices"
 	"testing"
 )
 
+// stream is a deterministic source for tests: the same seed always deals the
+// same cards, and unlike a fixed slice of bytes it never runs out part way
+// through a shuffle.
+func stream(seed byte) io.Reader {
+	var key [32]byte
+	for i := range key {
+		key[i] = seed
+	}
+	return mrand.NewChaCha8(key)
+}
+
 // fixture starts a match from a fixed seed, so a test can rely on the deal.
 func fixture(t *testing.T, seed byte) *State {
 	t.Helper()
-	s, _, err := NewGame([]string{"u0", "u1", "u2", "u3"}, bytes.NewReader(bytes.Repeat([]byte{seed}, SeedSize)))
+	s, _, err := NewGame([]string{"u0", "u1", "u2", "u3"}, stream(seed))
 	if err != nil {
 		t.Fatal(err)
 	}

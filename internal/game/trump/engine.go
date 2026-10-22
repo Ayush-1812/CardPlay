@@ -128,33 +128,40 @@ func NewGame(userIDs []string, random io.Reader) (*State, []Event, error) {
 		}
 		seen[id] = true
 	}
-	seed := make([]byte, SeedSize)
-	if _, err := io.ReadFull(random, seed); err != nil {
-		return nil, nil, err
-	}
-	s := &State{Schema: SchemaVersion, Seed: seed, Ready: make([]bool, Seats)}
+	s := &State{Schema: SchemaVersion, Ready: make([]bool, Seats)}
 	for _, id := range userIDs {
 		s.Players = append(s.Players, Player{UserID: id, Hand: []CardID{}})
 	}
 	// The toss happens once per match. Later rounds inherit entitlement from
 	// the round winner, so nothing here ever runs again (spec rules 9-12).
-	s.EntitledTeam = pick(Teams, s.Seed, 0)
+	team, err := index(Teams, random)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.EntitledTeam = team
 	events := []Event{{Kind: "toss_resolved", Audience: Public, Data: map[string]any{
 		"team": s.EntitledTeam, "seats": SeatsOfTeam(s.EntitledTeam),
 	}}}
-	return s, append(events, s.startRound()...), nil
+	dealt, err := s.startRound(random)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, append(events, dealt...), nil
 }
 
-// startRound shuffles a fresh deck, deals five to each seat and opens the
-// trump selection for the entitled team.
-func (s *State) startRound() []Event {
+// startRound builds a fresh 52-card deck, shuffles it from r, deals five to
+// each seat and opens the trump selection for the entitled team. The other
+// thirty-two stay in Rest: the second deal takes them from this same deck,
+// in this same order, without shuffling again.
+func (s *State) startRound(r io.Reader) ([]Event, error) {
 	s.Round++
-	s.Deals++
 	deck := make([]CardID, 0, 52)
 	for _, c := range Manifest() {
 		deck = append(deck, c.ID)
 	}
-	shuffle(deck, s.Seed, s.Deals)
+	if err := shuffle(deck, r); err != nil {
+		return nil, err
+	}
 	for seat := range s.Players {
 		s.Players[seat].Hand = slices.Clone(deck[seat*FirstDeal : (seat+1)*FirstDeal])
 	}
@@ -177,7 +184,7 @@ func (s *State) startRound() []Event {
 	for seat, p := range s.Players {
 		events = append(events, Event{Kind: "dealt_five", Audience: seat, Data: map[string]any{"stage": StageInitialDeal, "cards": slices.Clone(p.Hand)}})
 	}
-	return events
+	return events, nil
 }
 
 // Apply validates and applies one action by seat. It works on a clone and
@@ -370,12 +377,15 @@ func (s *State) readyRound(seat int) ([]Event, error) {
 	if slices.Contains(s.Ready, false) {
 		return events, nil
 	}
-	return append(events, s.startRound()...), nil
+	dealt, err := s.startRound(source)
+	if err != nil {
+		return nil, err
+	}
+	return append(events, dealt...), nil
 }
 
 func (s *State) clone() *State {
 	out := *s
-	out.Seed = slices.Clone(s.Seed)
 	out.Players = make([]Player, len(s.Players))
 	for i, p := range s.Players {
 		out.Players[i] = Player{UserID: p.UserID, Hand: slices.Clone(p.Hand)}

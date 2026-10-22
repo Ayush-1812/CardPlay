@@ -1,7 +1,6 @@
 package trump
 
 import (
-	"bytes"
 	"slices"
 	"testing"
 )
@@ -15,7 +14,7 @@ func TestStages(t *testing.T) {
 		if partial.Stage() != StageWaitingForPlayers {
 			t.Fatalf("stage %s", partial.Stage())
 		}
-		if _, _, err := NewGame([]string{"u0", "u1", "u2"}, bytes.NewReader(make([]byte, SeedSize))); err != ErrPlayers {
+		if _, _, err := NewGame([]string{"u0", "u1", "u2"}, stream(0)); err != ErrPlayers {
 			t.Fatal("three players must be refused")
 		}
 	})

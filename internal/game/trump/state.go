@@ -56,9 +56,10 @@ type RoundResult struct {
 // State is the whole game. It is stored as one JSON snapshot per revision and
 // is server-only: clients receive projections from ViewFor.
 type State struct {
-	Schema  int      `json:"schema"`
-	Seed    []byte   `json:"seed"`
-	Deals   uint64   `json:"deals"`
+	Schema int `json:"schema"`
+	// No seed and no deal counter are stored. Every round draws its shuffle
+	// from the operating system when it is dealt, so a stored match reveals
+	// nothing about the cards that have not been dealt yet.
 	Players []Player `json:"players"`
 
 	Phase Phase `json:"phase"`

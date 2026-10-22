@@ -33,7 +33,7 @@ The platform already provides everything that is not game rules: accounts and gu
 5. A standard 52-card deck, no jokers: four suits (spades, hearts, diamonds, clubs) × thirteen ranks.
 6. Ranks high to low: A K Q J 10 9 8 7 6 5 4 3 2.
 7. Every physical card has a unique ID, `<suit>-<rank>`, for example `spades-a`, `hearts-10`.
-8. Shuffling is server-side and unpredictable: a 32-byte `crypto/rand` seed per match, then ChaCha8 keyed by `SHA-256(seed ‖ counter)`, the same construction Monopoly uses.
+8. Shuffling is server-side and unpredictable: every round builds a fresh 52-card deck and shuffles it with Fisher–Yates, drawing each index straight from `crypto/rand` by rejection sampling. No seed is stored, so nothing in a saved match predicts a deal that has not happened yet.
 
 ### 2.3 The toss
 9. One toss per **match**, performed when the match is created. It selects the team entitled to choose trump in round 1.
@@ -133,7 +133,7 @@ Phases: `toss` is resolved inside match creation, so the first stored state is a
 
 Dealing is automatic, so the two deal stages are transitions rather than resting states; naming them on the events that perform them keeps all nine explicit without inventing states a player would have to act out of.
 
-**Randomness and time.** Randomness is injected: `NewGame` takes an `io.Reader` for the 32-byte seed (`crypto/rand` in production, fixed bytes in tests), and every later deal derives from it, so a match replays exactly. The engine needs no clock: it has no deadline, timestamp or expiry of its own, and the turn timeout belongs to the platform, which already records `awaiting_since` per match. If round history should carry timestamps, that is a clock worth injecting; say so and I will add it.
+**Randomness and time.** Randomness is drawn where it is used: `NewGame` takes an `io.Reader` for the toss and the first deal (`crypto/rand` in production, a deterministic stream in tests), and every later round reads the package source, which is `crypto/rand`. A match therefore does not replay from a seed — it does not need to, because the platform stores a state snapshot per revision and returns a retried command its recorded answer instead of re-running the engine. The engine needs no clock: it has no deadline, timestamp or expiry of its own, and the turn timeout belongs to the platform, which already records `awaiting_since` per match. If round history should carry timestamps, that is a clock worth injecting; say so and I will add it.
 
 ## 4. Server actions
 
@@ -156,7 +156,7 @@ Events (public unless noted): `toss_resolved`, `dealt_five` (private per seat), 
 
 `self`: your hand, and which of your cards are legal right now (so the client can dim the rest), plus your role in selection.
 
-Never projected: another player's cards, the undealt remainder, the seed. The existing Playwright leak check applies unchanged.
+Never projected: another player's cards or the undealt remainder. There is no seed to project. The existing Playwright leak check applies unchanged.
 
 ## 5. Frontend screens
 
@@ -173,7 +173,7 @@ Never projected: another player's cards, the undealt remainder, the seed. The ex
 |---|---|
 | 5–7 deck shape, unique IDs | `TestDeck` (52 cards, 4×13, IDs unique and parseable) |
 | 6 rank order | `TestRankOrder` |
-| 8 shuffle | `TestShuffleIsSeeded` (same seed ⇒ same deal; different seed ⇒ different) |
+| 8 shuffle | `TestShuffleDependsOnlyOnItsSource`, `TestIndexRejectsRatherThanFolds` (unbiased indices, no folding), `TestDealUsesTheWholeDeckExactlyOnce`, `TestEveryRoundIsDealtFresh`, `TestDealDistributionLooksEven` |
 | 1–2 four players, team map | `TestSeating` (rejects 3 or 5 players; seats 0,2 vs 1,3) |
 | 9–12 one toss per match | `TestTossHappensOnce` (reconnect, round 2, restart) |
 | 13–15 deal sizes | `TestDealFiveThenEight` |
@@ -250,7 +250,7 @@ Every behaviour below was run, not reasoned about. Engine tests are pure Go; int
 | Duplicate actions cannot corrupt state | Integration: a repeated command ID returns its recorded ack and plays no second card |
 | Concurrent actions cannot corrupt state | Integration: eight simultaneous plays at one revision, exactly one applies, revision advances by one |
 | Unauthorized clients cannot observe or act | Integration: an outsider gets 404 on the match, the room and chat, and is refused both `match.subscribe` and `game.command` |
-| No hidden information in projections | Integration compares every player's projection with the server's snapshot: no other hand, no undealt rest, no seed |
+| No hidden information in projections | Integration compares every player's projection with the server's snapshot: no other hand, no undealt rest, and the stored state itself carries no seed |
 | The selection-phase chat restriction cannot be bypassed | Integration refuses it over HTTP **and** over the WebSocket, then confirms nothing was stored |
 | Server restart recovery | Integration: a second instance serves the committed revision, trump and trick |
 | Mobile layout | Browser at 412px: the page cannot be scrolled sideways, the body fits, and the hand still scrolls in its own rail |

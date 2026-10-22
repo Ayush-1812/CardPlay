@@ -1,6 +1,8 @@
 package trump
 
 import (
+	"bytes"
+	"crypto/rand"
 	"slices"
 	"testing"
 )
@@ -106,9 +108,10 @@ func TestSeating(t *testing.T) {
 	}
 }
 
-// Spec rule 8: the deal is unpredictable without the seed, reproducible with
-// it, and different for each deal in the same match.
-func TestShuffleIsSeeded(t *testing.T) {
+// The shuffle is a function of the bytes it is given: the same bytes deal
+// the same cards, different bytes deal different ones, and either way the
+// deck is still exactly the 52 cards it started with.
+func TestShuffleDependsOnlyOnItsSource(t *testing.T) {
 	ids := func() []CardID {
 		var out []CardID
 		for _, c := range Manifest() {
@@ -116,19 +119,21 @@ func TestShuffleIsSeeded(t *testing.T) {
 		}
 		return out
 	}
-	seed := make([]byte, SeedSize)
-	for i := range seed {
-		seed[i] = byte(i)
-	}
 	a, b, other := ids(), ids(), ids()
-	shuffle(a, seed, 0)
-	shuffle(b, seed, 0)
-	if !slices.Equal(a, b) {
-		t.Fatal("the same seed and counter must deal the same cards")
+	if err := shuffle(a, stream(7)); err != nil {
+		t.Fatal(err)
 	}
-	shuffle(other, seed, 1)
+	if err := shuffle(b, stream(7)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(a, b) {
+		t.Fatal("the same bytes must produce the same deal")
+	}
+	if err := shuffle(other, stream(8)); err != nil {
+		t.Fatal(err)
+	}
 	if slices.Equal(a, other) {
-		t.Fatal("a later deal in the same match must differ")
+		t.Fatal("different bytes must produce a different deal")
 	}
 	if slices.Equal(a, ids()) {
 		t.Fatal("the shuffle did not change the order")
@@ -140,19 +145,57 @@ func TestShuffleIsSeeded(t *testing.T) {
 	if !slices.Equal(sorted, want) {
 		t.Fatal("the shuffle must keep exactly the 52 cards")
 	}
+	// A source that runs out is an error, not a half-shuffled deck.
+	short := ids()
+	if err := shuffle(short, bytes.NewReader([]byte{1, 2, 3})); err == nil {
+		t.Fatal("a truncated source must be reported")
+	}
+}
 
-	// The toss must be uniform over the two teams and stable for one match.
-	counts := [2]int{}
-	for i := range 200 {
-		s := make([]byte, SeedSize)
-		s[0] = byte(i)
-		s[1] = byte(i >> 8)
-		counts[pick(Teams, s, 0)]++
+// index must not fold an out-of-range draw back into the range: folding is
+// what makes the low cards likelier than the high ones.
+func TestIndexRejectsRatherThanFolds(t *testing.T) {
+	// For n=3 the mask is 0b11, so a drawn 3 is out of range. It must be
+	// thrown away and the next draw used, not turned into 0.
+	r := bytes.NewReader([]byte{0, 0, 0, 3, 0, 0, 0, 1})
+	got, err := index(3, r)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if counts[0] < 60 || counts[1] < 60 {
-		t.Fatalf("the toss looks biased: %v", counts)
+	if got != 1 {
+		t.Fatalf("index returned %d; the rejected draw was folded back in", got)
 	}
-	if pick(Teams, seed, 0) != pick(Teams, seed, 0) {
-		t.Fatal("the toss must be stable for one match")
+	// One outcome needs no randomness at all, so nothing is read.
+	rest := bytes.NewReader(nil)
+	if got, err := index(1, rest); err != nil || got != 0 {
+		t.Fatalf("index(1) = %d, %v", got, err)
+	}
+
+	// Over many draws each of three outcomes should come up about as often.
+	counts := [3]int{}
+	for range 3000 {
+		v, err := index(3, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counts[v]++
+	}
+	for i, n := range counts {
+		if n < 850 || n > 1150 {
+			t.Errorf("outcome %d came up %d times in 3000; expected about 1000", i, n)
+		}
+	}
+
+	// The toss, which uses the same draw, reaches both teams.
+	teams := [2]int{}
+	for range 200 {
+		team, err := index(Teams, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		teams[team]++
+	}
+	if teams[0] < 60 || teams[1] < 60 {
+		t.Fatalf("the toss looks biased: %v", teams)
 	}
 }
