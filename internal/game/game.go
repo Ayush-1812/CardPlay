@@ -99,6 +99,22 @@ type ChatPolicy interface {
 	ChatOpen(State) (bool, error)
 }
 
+// VoicePolicyState is a game's answer about voice chat. Reason is shown to
+// players while voice is closed, so a silenced microphone is never a mystery.
+type VoicePolicyState struct {
+	Open   bool   `json:"open"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// VoicePolicy is implemented by games that must close voice chat during part
+// of a match, for the same reason they close text chat: so players cannot
+// pass information the rules hide. The platform asks the running game before
+// relaying any signalling and before letting a player transmit; a game that
+// does not implement it leaves voice open.
+type VoicePolicy interface {
+	VoiceOpen(State) (VoicePolicyState, error)
+}
+
 // CardCatalog is implemented by games whose public card metadata clients need.
 type CardCatalog interface {
 	Cards() any
