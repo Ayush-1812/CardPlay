@@ -15,6 +15,8 @@ export type Room = {
   team_a: string;
   team_b: string;
   capacity: number;
+  // How many 52-card decks the game is dealt from. Only Bluff reads it.
+  deck_count: number;
   status: string;
   revision: number;
   rules_version: string;

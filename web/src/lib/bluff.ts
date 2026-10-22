@@ -138,9 +138,13 @@ export const RANK_ORDER: BluffRank[] = [
   "k",
 ];
 
+// A card id is "rank-suit", with a copy marker when more than one deck is
+// in play: "q-hearts#2" is the second deck's queen of hearts, a different
+// card that reads the same.
 export function parseCard(
   id: string,
 ): { rank: BluffRank; suit: BluffSuit } | null {
+  id = id.split("#")[0];
   const cut = id.lastIndexOf("-");
   if (cut <= 0) return null;
   const rank = id.slice(0, cut) as BluffRank;

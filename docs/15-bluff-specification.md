@@ -21,6 +21,27 @@ have to read the engine to find out.
 | 7 | Play always continues clockwise from the player who was challenged; winning a challenge is not a turn | `advance(last.Seat)` |
 | 8 | A last card makes a pending winner, confirmed when the play survives; a bluff nobody calls still wins | `play`, `closeWindow`, `challenge` |
 
+## More than one deck
+
+A room may be played with **one to four decks** (a room setting beside
+capacity; the other games have fixed decks by rule). Everything about the
+game is unchanged -- there are simply more cards.
+
+- Every copy is its own card. The first deck keeps the plain ids, so a
+  one-deck game reads exactly as before; later decks carry a copy marker,
+  so `q-hearts#2` is the second deck's queen of hearts. Rank and suit read
+  through the marker, which is why no rule had to learn about copies.
+- A play may hold four of a rank **per deck**: up to eight with two decks,
+  sixteen with four. The table takes that number from the server, so the
+  controls and the refusals follow on their own.
+- The whole lot is still dealt out: 104 cards across three players is
+  35/35/34.
+- The count reaches the engine through `game.Setup.Options`, a room's
+  settings as JSON, rather than a field on the boundary that only one game
+  would use. A room that never set it, or a client that has never heard of
+  it, plays with one deck, and a settings update that omits it leaves it
+  alone rather than resetting it.
+
 Hands are dealt as evenly as the deck allows: 3 players get 18/17/17, four
 get 13 each, five get 11/11/10/10/10, six get 9/9/9/9/8/8. Because the
 dealing seat is drawn at random, the spare cards do not always fall on the

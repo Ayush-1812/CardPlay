@@ -1103,3 +1103,12 @@ footer.sheet-foot {
   color: var(--cream, #f5ead0);
   font-size: 13px;
 }
+
+/* A short note under a setting, explaining what the choice does. */
+.field-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.75;
+}

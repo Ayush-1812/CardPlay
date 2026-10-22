@@ -243,3 +243,87 @@ test.describe.serial("bluff at a four-seat table", () => {
       expect(p.errors, `${p.name} page errors`).toEqual([]);
   });
 });
+
+// A room may be played with more than one deck. Everything about the game
+// is the same; there are simply more cards, so bigger claims are possible.
+test.describe.serial("bluff with two decks", () => {
+  const players: Player[] = [];
+  const pub = (p: Player) => latestState(p).view.public;
+  const self = (p: Player) => latestState(p).view.self;
+
+  test.beforeAll(async ({ browser }) => {
+    for (const name of ["dea", "deb", "dec"])
+      players.push(await newPlayer(browser, name));
+  });
+  test.afterAll(async () => {
+    for (const p of players) await p?.context.close();
+  });
+
+  test("two decks deal 104 cards and allow a claim of eight", async () => {
+    const host = players[0];
+    await playAsGuest(host);
+    await host.page.getByRole("button", { name: /^Bluff/ }).click();
+    await host.page.getByRole("button", { name: "Create room" }).click();
+    await expect(
+      host.page.getByRole("heading", { level: 1, name: /'s table$/ }),
+    ).toBeVisible();
+    const link = await host.page.getByLabel("Invite link").inputValue();
+
+    // Three seats, two decks.
+    await host.page.getByText("Room settings").click();
+    await host.page
+      .locator('.room-settings select[name="capacity"]')
+      .selectOption("3");
+    await host.page
+      .locator('.room-settings select[name="decks"]')
+      .selectOption("2");
+    await host.page
+      .locator(".room-settings")
+      .getByRole("button", { name: "Save" })
+      .click();
+    await expect
+      .poll(async () =>
+        host.page.locator('.room-settings select[name="decks"]').inputValue(),
+      )
+      .toBe("2");
+
+    for (const p of players.slice(1)) {
+      await p.page.goto(link);
+      await p.page.getByLabel("Your name").fill(p.name);
+      await p.page.getByRole("button", { name: "Join as guest" }).click();
+      await expect(p.page.locator(".room-head .pill")).toHaveText("Connected");
+    }
+    for (const p of players)
+      await p.page.getByRole("button", { name: "I'm ready" }).click();
+    await host.page.getByRole("button", { name: "Start match" }).click();
+    for (const p of players)
+      await expect(p.page.locator(".bluff-table")).toBeVisible();
+
+    // 104 cards across three hands: 35, 35, 34 in some order.
+    const counts = pub(players[0]).counts;
+    expect(counts.reduce((a, b) => a + b, 0)).toBe(104);
+    expect([...counts].sort((a, b) => b - a)).toEqual([35, 35, 34]);
+    expect(pub(players[0]).decks).toBe(2);
+    // A play may now claim up to eight, and the controls say so.
+    expect(pub(players[0]).max_cards).toBe(8);
+    const turn = players.find((p) => self(p).seat === pub(p).turn)!;
+    await expect(
+      turn.page.getByRole("button", { name: /Choose up to 8/ }),
+    ).toBeVisible();
+
+    // Eight cards can be selected and played as one claim.
+    const cards = turn.page.locator(".hand-card:not([disabled])");
+    for (let i = 0; i < 8; i++) await cards.nth(i).click();
+    await expect(turn.page.locator(".hand-card.chosen")).toHaveCount(8);
+    await turn.page.getByRole("button", { name: /^Play 8 as / }).click();
+    for (const p of players)
+      await expect(p.page.locator(".claim")).toContainText("played 8 Aces", {
+        timeout: 15_000,
+      });
+  });
+
+  test("no page errors anywhere", async () => {
+    for (const p of players)
+      expect(p.errors, `${p.name} page errors`).toEqual([]);
+  });
+});

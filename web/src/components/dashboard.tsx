@@ -1087,12 +1087,13 @@ export function Dashboard() {
             setNotice("Room closed.");
           })
         }
-        onUpdate={(name, capacity, teams) =>
+        onUpdate={(name, capacity, teams, decks) =>
           void run(async () => {
             await api(`/rooms/${selected}`, "PATCH", {
               name,
               capacity,
               ...(teams ? { team_a: teams[0], team_b: teams[1] } : {}),
+              ...(decks ? { decks } : {}),
             });
             setNotice("Room updated.");
           })
