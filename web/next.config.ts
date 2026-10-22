@@ -34,7 +34,11 @@ const securityHeaders = [
   { key: "Referrer-Policy", value: "no-referrer" },
   {
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(), payment=()",
+    // The microphone is allowed for this origin only, because voice chat
+    // needs it; a document that forbids it is refused by the browser before
+    // the player is ever asked. Everything else stays off, and nothing is
+    // delegated to a frame: this page embeds none.
+    value: "camera=(), microphone=(self), geolocation=(), payment=()",
   },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   // Set ENABLE_HSTS=1 when building for an HTTPS-only deployment.

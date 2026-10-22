@@ -269,6 +269,16 @@ test.describe.serial("voice chat at a four-seat table", () => {
 
 // A player in another room must not reach this one's channel, and a player
 // who refuses the microphone must still be able to play.
+test("the page allows itself a microphone", async ({ page }) => {
+  // A document that sends microphone=() is refused by the browser before a
+  // player is ever asked, whatever their settings say. This header is the
+  // one thing that can silently disable the whole feature.
+  const response = await page.goto("/");
+  const policy = response?.headers()["permissions-policy"] ?? "";
+  expect(policy).toContain("microphone=(self)");
+  expect(policy).toContain("camera=()");
+});
+
 test.describe.serial("voice is scoped and optional", () => {
   test("a denied microphone does not stop the game", async ({ browser }) => {
     const p = await newPlayer(browser, "vdenied", {
