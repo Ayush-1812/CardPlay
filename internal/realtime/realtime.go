@@ -410,6 +410,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			h.broadcastVoice(room, outbound{Version: 1, Type: "voice.participants", RoomID: room, Payload: map[string]any{"participants": list}}, "")
+			h.queue(c, outbound{Version: 1, Type: "ack", ID: in.ID, RoomID: room})
 		case "voice.signal":
 			if h.Voice == nil {
 				sendError("VOICE_DISABLED", "Voice chat is switched off on this server")
@@ -456,7 +457,9 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if !h.sendVoice(room, sig.To, outbound{Version: 1, Type: "voice.signal", RoomID: room, Payload: map[string]any{"from": c.actor, "kind": sig.Kind, "data": sig.Data}}) {
 				sendError("VOICE_NO_PEER", "That player is not in this voice channel")
+				continue
 			}
+			h.queue(c, outbound{Version: 1, Type: "ack", ID: in.ID, RoomID: room})
 		case "match.subscribe":
 			if !httpx.UUID(in.MatchID) {
 				sendError("INVALID_REQUEST", "Invalid match id")
