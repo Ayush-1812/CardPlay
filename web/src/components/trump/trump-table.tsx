@@ -36,6 +36,7 @@ export function TrumpTable({
   connection,
   alerts,
   chat,
+  voice,
   unread = 0,
   onCommand,
   onLeave,
@@ -48,6 +49,7 @@ export function TrumpTable({
   connection?: string;
   alerts?: ReactNode;
   chat?: ReactNode;
+  voice?: ReactNode;
   unread?: number;
   onCommand: Command;
   onLeave: () => void;
@@ -357,6 +359,7 @@ export function TrumpTable({
       {/* The dock stays put: your hand, what the table is waiting for and
           the controls are on screen whatever the device. */}
       <div className="trump-dock">
+        {voice}
         <div className="hand-area">
           <p className="hand-status" role="status" aria-live="polite">
             {!playing
