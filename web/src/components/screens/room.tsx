@@ -18,6 +18,7 @@ export function RoomScreen({
   link,
   friends,
   result,
+  voice,
   chat,
   unreadBadge,
   onNewLink,
@@ -38,6 +39,7 @@ export function RoomScreen({
   link: string;
   friends: Friend[];
   result?: ReactNode;
+  voice?: ReactNode;
   chat: ReactNode;
   unreadBadge?: ReactNode;
   onNewLink: () => void;
@@ -116,6 +118,7 @@ export function RoomScreen({
       </div>
 
       {result}
+      {voice}
 
       {waiting && (
         <section className="panel invite-panel" aria-label="Invite players">

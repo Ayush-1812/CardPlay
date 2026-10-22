@@ -800,3 +800,27 @@ func (m *Module) ChatOpen(ctx context.Context, q *store.Queries, roomID string) 
 	}
 	return policy.ChatOpen(game.State{SchemaVersion: int(row.SchemaVersion), Data: row.State})
 }
+
+// VoiceOpen reports whether the game running in a room currently allows
+// players to speak to each other. It mirrors ChatOpen: a room with no match,
+// or a game with no opinion, leaves voice open. The answer carries a reason
+// so the client can say why a microphone has gone quiet.
+func (m *Module) VoiceOpen(ctx context.Context, q *store.Queries, roomID string) (game.VoicePolicyState, error) {
+	open := game.VoicePolicyState{Open: true}
+	row, err := q.RoomGameState(ctx, roomID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return open, nil
+	}
+	if err != nil {
+		return game.VoicePolicyState{}, err
+	}
+	g, ok := m.Games.Get(row.GameID, row.RulesVersion)
+	if !ok {
+		return open, nil
+	}
+	policy, ok := g.(game.VoicePolicy)
+	if !ok {
+		return open, nil
+	}
+	return policy.VoiceOpen(game.State{SchemaVersion: int(row.SchemaVersion), Data: row.State})
+}

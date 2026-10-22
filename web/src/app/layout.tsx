@@ -4,6 +4,7 @@ import "./globals.css";
 import "./table.css";
 import "./screens.css";
 import "./trump.css";
+import "./voice.css";
 import { ErrorReporter } from "../components/error-reporter";
 
 // Table typography (SIL Open Font License 1.1; self-hosted by next/font).

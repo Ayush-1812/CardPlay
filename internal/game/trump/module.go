@@ -124,6 +124,21 @@ func (Module) ChatOpen(st game.State) (bool, error) {
 	return s.ChatOpen(), nil
 }
 
+// VoiceOpen implements the platform's voice gate. The trump is chosen from
+// one player's five cards, and a partner may be asked to choose instead, so
+// speech is closed for exactly the window chat is (spec rule 20): from the
+// deal of five until the suit is named, delegation included.
+func (Module) VoiceOpen(st game.State) (game.VoicePolicyState, error) {
+	s, err := decode(st)
+	if err != nil {
+		return game.VoicePolicyState{Open: true}, err
+	}
+	if s.ChatOpen() {
+		return game.VoicePolicyState{Open: true}, nil
+	}
+	return game.VoicePolicyState{Open: false, Reason: "Voice is off while the trump is chosen. It comes back for the rest of the round."}, nil
+}
+
 func encode(s *State) (game.State, error) {
 	data, err := json.Marshal(s)
 	return game.State{SchemaVersion: SchemaVersion, Data: data}, err

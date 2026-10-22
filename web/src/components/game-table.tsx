@@ -51,6 +51,7 @@ type Props = {
   alerts?: ReactNode;
   // Room chat, shown in a drawer; unread counts messages not yet seen.
   chat?: ReactNode;
+  voice?: ReactNode;
   unread?: number;
 };
 
@@ -431,6 +432,7 @@ export function GameTable({
   connection,
   alerts,
   chat,
+  voice,
   unread = 0,
 }: Props) {
   const wide = useWide();
@@ -845,6 +847,7 @@ export function GameTable({
 
       {!wide && (
         <div className="hand-dock my-hand">
+          {voice}
           <div className="dock-bar">
             {turnPill}
             {turnActions}

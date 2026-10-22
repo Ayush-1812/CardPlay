@@ -25,9 +25,35 @@ type Config struct {
 	// TurnTimeout is how long a match waits for the awaited player before the
 	// server plays the default move for them; 0 disables it.
 	TurnTimeout time.Duration
+	// Voice configures in-game voice chat. Disabled voice leaves the rest of
+	// the room untouched: signalling is refused and the client hides it.
+	Voice Voice
+}
+
+// Voice is the WebRTC configuration players need to reach each other. The
+// TURN secret never leaves the server; each player is issued a short-lived
+// credential derived from it (coturn's REST scheme).
+type Voice struct {
+	Enabled    bool
+	STUNURLs   []string
+	TURNURLs   []string
+	TURNSecret string
+	TURNTTL    time.Duration
 }
 
 func Load() (Config, error) { return Parse(os.Getenv) }
+
+// splitList reads a comma-separated setting, ignoring empty entries and
+// surrounding spaces.
+func splitList(v string) []string {
+	out := []string{}
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
 
 func Parse(get func(string) string) (Config, error) {
 	c := Config{Environment: get("APP_ENV"), Address: get("HTTP_ADDR"), DatabaseURL: get("DATABASE_URL"), Origin: get("APP_ORIGIN"), SMTPAddress: get("SMTP_ADDR"), MailFrom: get("MAIL_FROM"), SMTPUsername: get("SMTP_USERNAME"), SMTPPassword: get("SMTP_PASSWORD"), SessionTTL: 7 * 24 * time.Hour, MetricsAddress: get("METRICS_ADDR"), DBMaxConns: 20, TurnTimeout: 2 * time.Minute}
@@ -68,6 +94,38 @@ func Parse(get func(string) string) (Config, error) {
 			return c, errors.New("MATCH_TURN_TIMEOUT must be 0 (off) or between 15s and 1h, for example 2m")
 		}
 		c.TurnTimeout = d
+	}
+	c.Voice = Voice{Enabled: true, TURNSecret: get("VOICE_TURN_SECRET"), TURNTTL: 10 * time.Minute, STUNURLs: []string{"stun:stun.l.google.com:19302"}}
+	switch get("VOICE_ENABLED") {
+	case "", "1":
+	case "0":
+		c.Voice.Enabled = false
+	default:
+		return c, errors.New("VOICE_ENABLED must be 0 or 1")
+	}
+	if v := get("VOICE_STUN_URLS"); v != "" {
+		c.Voice.STUNURLs = splitList(v)
+	}
+	c.Voice.TURNURLs = splitList(get("VOICE_TURN_URLS"))
+	for _, raw := range c.Voice.STUNURLs {
+		if !strings.HasPrefix(raw, "stun:") && !strings.HasPrefix(raw, "stuns:") {
+			return c, errors.New("VOICE_STUN_URLS entries must start with stun: or stuns:")
+		}
+	}
+	for _, raw := range c.Voice.TURNURLs {
+		if !strings.HasPrefix(raw, "turn:") && !strings.HasPrefix(raw, "turns:") {
+			return c, errors.New("VOICE_TURN_URLS entries must start with turn: or turns:")
+		}
+	}
+	if len(c.Voice.TURNURLs) > 0 && len(c.Voice.TURNSecret) < 16 {
+		return c, errors.New("VOICE_TURN_URLS needs VOICE_TURN_SECRET of at least 16 characters")
+	}
+	if v := get("VOICE_TURN_TTL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Minute || d > time.Hour {
+			return c, errors.New("VOICE_TURN_TTL must be between 1m and 1h, for example 10m")
+		}
+		c.Voice.TURNTTL = d
 	}
 	u, err := url.Parse(c.DatabaseURL)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" {

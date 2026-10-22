@@ -24,6 +24,9 @@ import { ChatPanel } from "./chat";
 // game at a time, so neither table belongs in the bundle that serves the
 // entry screen and the lobby. Loading them on demand keeps the first visit
 // small, which is what a phone on a slow connection feels.
+import { useVoice, type VoiceFrame } from "./voice/use-voice";
+import { VoiceBar } from "./voice/voice-bar";
+
 const GameTable = dynamic(
   () => import("./game-table").then((m) => m.GameTable),
   { ssr: false, loading: () => <TableLoading /> },
@@ -123,6 +126,9 @@ export function Dashboard() {
   const sendRef = useRef<
     ((frame: Record<string, unknown>) => Promise<Reply>) | null
   >(null);
+  // Voice signalling shares the room socket. Frames are handed to whoever
+  // registered, so the socket keeps knowing nothing about WebRTC.
+  const voiceListeners = useRef(new Set<(frame: VoiceFrame) => void>());
   const matchRef = useRef<MatchState | null>(null);
   const gameBusyRef = useRef(false);
   const chatPanel = useRef<HTMLElement | null>(null);
@@ -513,6 +519,9 @@ export function Dashboard() {
                   : current,
               );
             }
+            if (message.type.startsWith("voice."))
+              for (const listener of voiceListeners.current)
+                listener(message as VoiceFrame);
             if (message.type === "room.updated")
               void loadRoom().catch(onLoadError);
             if (message.type === "chat.updated")
@@ -731,6 +740,41 @@ export function Dashboard() {
     ? 0
     : chat.filter((m) => m.id > chatBoundary && m.user_id !== user?.id).length;
 
+  // Voice chat. It follows the room, not the match, so players can talk in
+  // the lobby and keep talking when the match starts.
+  const registerVoice = useCallback((fn: (frame: VoiceFrame) => void) => {
+    voiceListeners.current.add(fn);
+    return () => {
+      voiceListeners.current.delete(fn);
+    };
+  }, []);
+  const sendVoice = useCallback(
+    (frame: Record<string, unknown>) =>
+      sendRef.current
+        ? sendRef.current(frame)
+        : Promise.resolve({
+            type: "error",
+            payload: { code: "OFFLINE" },
+          } as Reply),
+    [],
+  );
+  const voice = useVoice({
+    roomID: selected,
+    selfID: user?.id ?? "",
+    connection,
+    send: sendVoice,
+    register: registerVoice,
+  });
+  const memberName = useCallback(
+    (id: string) =>
+      view?.members.find((m) => m.id === id)?.display_name ?? "A player",
+    [view],
+  );
+  const voiceSection =
+    selected && user ? (
+      <VoiceBar {...voice} selfID={user.id} name={memberName} />
+    ) : null;
+
   const chatSection =
     selected && user ? (
       <ChatPanel
@@ -842,6 +886,7 @@ export function Dashboard() {
           connection={connection}
           alerts={alertsSection}
           chat={chatSection}
+          voice={voiceSection}
           unread={unread}
           onCommand={command}
           onLeave={() =>
@@ -872,6 +917,7 @@ export function Dashboard() {
             connection={connection}
             alerts={alertsSection}
             chat={chatSection}
+            voice={voiceSection}
             unread={unread}
             onCommand={command}
             onHome={() => openRoom(null)}
@@ -956,6 +1002,7 @@ export function Dashboard() {
           ) : undefined
         }
         chat={chatSection}
+        voice={voiceSection}
         unreadBadge={
           unread > 0 && (
             <button

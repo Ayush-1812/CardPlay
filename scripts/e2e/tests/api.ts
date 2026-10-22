@@ -18,6 +18,9 @@ export function apiEnv(base: string): NodeJS.ProcessEnv {
     SMTP_ADDR: process.env.E2E_SMTP_ADDR ?? "127.0.0.1:1026",
     MAIL_FROM: "hello@cardplay.test",
     LOG_FORMAT: "json",
+    // Voice: a local STUN address so the suite makes no outside requests.
+    // Peers in the same browser connect on host candidates anyway.
+    VOICE_STUN_URLS: "stun:127.0.0.1:3478",
   };
 }
 

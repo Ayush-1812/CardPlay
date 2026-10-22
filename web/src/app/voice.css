@@ -1,0 +1,149 @@
+/* Voice chat controls. Phone first: one wrapping row of targets no smaller
+   than 40px, widening into a bar with the participant list beside it. */
+
+.voice-bar {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(239, 192, 73, 0.22);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--cream, #f3ead6);
+  min-width: 0;
+}
+.voice-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.voice-btn,
+.voice-talk,
+.voice-join,
+.voice-unblock {
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(239, 192, 73, 0.3);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.voice-btn:focus-visible,
+.voice-talk:focus-visible,
+.voice-join:focus-visible,
+.voice-unblock:focus-visible {
+  outline: 3px solid var(--accent, #efc049);
+  outline-offset: 2px;
+}
+.voice-btn.off {
+  background: #5b2525;
+  border-color: #8c4b4b;
+}
+/* A live microphone is shown by more than colour: the label changes too. */
+.voice-btn.talking {
+  border-color: var(--accent, #efc049);
+  box-shadow: 0 0 0 2px rgba(239, 192, 73, 0.35);
+}
+.voice-btn.leave {
+  margin-left: auto;
+}
+.voice-talk {
+  background: rgba(239, 192, 73, 0.16);
+  touch-action: none;
+  user-select: none;
+}
+.voice-talk.talking {
+  background: var(--accent, #efc049);
+  color: #1b1b1b;
+}
+.voice-note {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.8;
+  line-height: 1.35;
+}
+.voice-note.closed {
+  opacity: 1;
+  color: #f3c969;
+}
+.voice-note.error {
+  opacity: 1;
+  color: #ffd9d9;
+}
+.voice-unblock {
+  text-align: left;
+  white-space: normal;
+  padding: 8px 12px;
+}
+.voice-people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.voice-alone {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.voice-person {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.voice-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+}
+.voice-dot.speaking {
+  background: var(--accent, #efc049);
+  box-shadow: 0 0 0 3px rgba(239, 192, 73, 0.25);
+}
+.voice-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.voice-flags {
+  font-size: 10px;
+  opacity: 0.7;
+  grid-column: 2;
+  grid-row: 2;
+}
+.voice-volume {
+  display: flex;
+  align-items: center;
+}
+.voice-volume input {
+  width: 84px;
+  min-height: 40px;
+}
+
+@media (min-width: 768px) {
+  .voice-people {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 14px;
+  }
+}
+/* On a short screen the list gives way: the controls are what matter. */
+@media (max-height: 620px) {
+  .voice-bar {
+    padding: 6px 8px;
+  }
+  .voice-people {
+    max-height: 84px;
+    overflow-y: auto;
+  }
+}

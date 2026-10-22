@@ -28,10 +28,23 @@ export default defineConfig({
   timeout: 5 * 60_000,
   expect: { timeout: 20_000 },
   retries: 0,
-  reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
+  reporter: [
+    ["list"],
+    ["html", { open: "never", outputFolder: "playwright-report" }],
+  ],
   use: {
     baseURL: BASE,
     channel: process.env.E2E_CHANNEL ?? "msedge",
+    // A fake microphone, so voice chat can be driven without hardware, and
+    // the permission prompt accepted for it. A refusal is simulated in the
+    // page instead, which tests our handling rather than Chrome's dialog.
+    launchOptions: {
+      args: [
+        "--use-fake-device-for-media-stream",
+        "--use-fake-ui-for-media-stream",
+        "--autoplay-policy=no-user-gesture-required",
+      ],
+    },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     actionTimeout: 20_000,
