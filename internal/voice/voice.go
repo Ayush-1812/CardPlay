@@ -59,7 +59,15 @@ type Module struct {
 	// rooms maps a room id to the users currently in its voice channel and
 	// the state each of them published. It is in-memory on purpose: a voice
 	// channel is a property of a live connection, not something to store.
-	rooms map[string]map[string]Participant
+	rooms map[string]map[string]entry
+}
+
+// entry is one participant plus the socket that owns the membership. A
+// player who opens a second tab takes the channel over; the first tab's
+// socket then closes without removing the player the second tab put there.
+type entry struct {
+	Participant
+	owner string
 }
 
 // Participant is one player in a voice channel, as everyone else sees them.
@@ -152,7 +160,7 @@ func (m *Module) iceServers(userID string, now time.Time) ([]ICEServer, time.Dur
 
 // Join puts a player in a room's voice channel and returns everyone in it,
 // including the caller. The caller must already be a member of the room.
-func (m *Module) Join(ctx context.Context, roomID, actor string) ([]Participant, error) {
+func (m *Module) Join(ctx context.Context, roomID, actor, owner string) ([]Participant, error) {
 	if !m.Config.Enabled {
 		return nil, &Error{"VOICE_DISABLED", 503, "Voice chat is switched off on this server"}
 	}
@@ -166,32 +174,36 @@ func (m *Module) Join(ctx context.Context, roomID, actor string) ([]Participant,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.rooms == nil {
-		m.rooms = map[string]map[string]Participant{}
+		m.rooms = map[string]map[string]entry{}
 	}
 	channel, exists := m.rooms[roomID]
 	if !exists {
-		channel = map[string]Participant{}
+		channel = map[string]entry{}
 		m.rooms[roomID] = channel
 	}
-	if _, already := channel[actor]; !already && len(channel) >= MaxParticipants {
+	was, already := channel[actor]
+	if !already && len(channel) >= MaxParticipants {
 		return nil, &Error{"VOICE_FULL", 409, "This room's voice channel is full"}
 	}
-	if _, already := channel[actor]; !already {
-		channel[actor] = Participant{UserID: actor}
+	if !already {
+		was = entry{Participant: Participant{UserID: actor}}
 	}
+	was.owner = owner
+	channel[actor] = was
 	return participants(channel), nil
 }
 
-// Leave removes a player from a room's channel. It is safe to call for a
-// player who never joined, which is what a closing socket does.
-func (m *Module) Leave(roomID, actor string) []Participant {
+// Leave removes a player, but only if owner still holds the membership. An
+// empty owner removes it whoever holds it.
+func (m *Module) Leave(roomID, actor, owner string) []Participant {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	channel, ok := m.rooms[roomID]
 	if !ok {
 		return nil
 	}
-	if _, in := channel[actor]; !in {
+	held, in := channel[actor]
+	if !in || (owner != "" && held.owner != owner) {
 		return nil
 	}
 	delete(channel, actor)
@@ -238,10 +250,10 @@ func (m *Module) Participants(roomID string) []Participant {
 
 // participants returns the channel as a stable, sorted slice. The caller
 // holds the lock.
-func participants(channel map[string]Participant) []Participant {
+func participants(channel map[string]entry) []Participant {
 	out := make([]Participant, 0, len(channel))
 	for _, p := range channel {
-		out = append(out, p)
+		out = append(out, p.Participant)
 	}
 	slices.SortFunc(out, func(a, b Participant) int {
 		switch {

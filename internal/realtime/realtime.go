@@ -8,6 +8,7 @@ import (
 	"cardplay/internal/obs"
 	"cardplay/internal/rooms"
 	"cardplay/internal/store"
+	"cardplay/internal/voice"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +34,10 @@ const (
 	// closeReplaced: another tab or device took control of this seat (PRD P08).
 	closeReplaced websocket.StatusCode = 4009
 )
+
+// sockets numbers connections so a voice membership can be tied to the one
+// socket that created it.
+var sockets atomic.Uint64
 
 type Envelope struct {
 	Version int             `json:"v"`
@@ -47,6 +54,22 @@ type outbound struct {
 	RoomID  string `json:"room_id,omitempty"`
 	MatchID string `json:"match_id,omitempty"`
 	Payload any    `json:"payload,omitempty"`
+}
+
+// voiceSignal is one WebRTC negotiation frame passed between two players.
+// The server never parses the description or the candidate: it checks who is
+// allowed to receive it and relays it unchanged.
+type voiceSignal struct {
+	To   string          `json:"to"`
+	Kind string          `json:"kind"`
+	Data json.RawMessage `json:"data"`
+}
+
+// voiceState is a player's own microphone state, shown to the others.
+type voiceState struct {
+	Muted    bool `json:"muted"`
+	Deafened bool `json:"deafened"`
+	Speaking bool `json:"speaking"`
 }
 
 // commandMessage is the payload of a game.command frame.
@@ -66,12 +89,20 @@ type client struct {
 	send             chan outbound
 	// dirty coalesces match notifications; the push loop sends the latest projection.
 	dirty chan struct{}
+	// voiceRoom is the room whose voice channel this socket joined, and
+	// owner identifies the socket itself, so one tab closing cannot remove a
+	// player another tab put in the channel. Guarded by Hub.mu.
+	voiceRoom string
+	owner     string
 }
 type Hub struct {
 	DB      *pgxpool.Pool
 	Rooms   *rooms.Module
 	Chat    *chat.Module
 	Matches *matches.Module
+	// Voice is optional: a nil module leaves voice signalling refused and the
+	// client hides the controls.
+	Voice   *voice.Module
 	Origin  string
 	mu      sync.Mutex
 	clients map[*client]bool
@@ -144,11 +175,14 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = conn.CloseNow() }()
 	conn.SetReadLimit(16 << 10)
 	a := httpx.Actor(r)
-	c := &client{conn: conn, actor: a.ID, session: a.SessionHash, send: make(chan outbound, 32), dirty: make(chan struct{}, 1)}
+	c := &client{conn: conn, actor: a.ID, session: a.SessionHash, owner: strconv.FormatUint(sockets.Add(1), 10), send: make(chan outbound, 32), dirty: make(chan struct{}, 1)}
 	h.mu.Lock()
 	h.clients[c] = true
 	h.mu.Unlock()
 	defer func() { h.mu.Lock(); delete(h.clients, c); h.mu.Unlock() }()
+	// A closing socket leaves the voice channel it joined, so nobody is left
+	// listed as present with no connection behind them.
+	defer h.leaveVoice(c)
 	// When the socket ends its seat becomes absent and the match pauses
 	// (PRD P09). A replaced controller's generation no longer matches, so a
 	// stale socket closing never pauses the match its successor is playing.
@@ -234,6 +268,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.send <- outbound{Version: 1, Type: "hello", Payload: map[string]any{"heartbeat_seconds": 20}}
 	window := time.Now()
 	messages := 0
+	voiceMessages := 0
 	for {
 		var in Envelope
 		if err = wsjson.Read(ctx, conn, &in); err != nil {
@@ -242,12 +277,25 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if time.Since(window) > 10*time.Second {
 			window = time.Now()
 			messages = 0
+			voiceMessages = 0
 		}
-		messages++
-		if messages > 30 {
-			obs.RateLimited.Inc("websocket")
-			_ = conn.Close(websocket.StatusPolicyViolation, "Rate limit")
-			return
+		if strings.HasPrefix(in.Type, "voice.") {
+			// Negotiating with three peers trickles dozens of candidates in
+			// a few seconds, so signalling is budgeted separately from the
+			// conversational traffic rather than sharing its limit.
+			voiceMessages++
+			if voiceMessages > 300 {
+				obs.RateLimited.Inc("websocket_voice")
+				_ = conn.Close(websocket.StatusPolicyViolation, "Rate limit")
+				return
+			}
+		} else {
+			messages++
+			if messages > 30 {
+				obs.RateLimited.Inc("websocket")
+				_ = conn.Close(websocket.StatusPolicyViolation, "Rate limit")
+				return
+			}
 		}
 		sendError := func(code, message string) {
 			h.queue(c, outbound{Version: 1, Type: "error", ID: in.ID, Payload: map[string]string{"code": code, "message": message}})
@@ -310,6 +358,105 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			h.queue(c, outbound{Version: 1, Type: "ack", ID: in.ID, RoomID: in.RoomID, Payload: map[string]any{"message_id": msg.ID, "client_id": msg.ClientID}})
+		case "voice.join":
+			if h.Voice == nil {
+				sendError("VOICE_DISABLED", "Voice chat is switched off on this server")
+				continue
+			}
+			if !httpx.UUID(in.RoomID) {
+				sendError("INVALID_REQUEST", "Invalid room id")
+				continue
+			}
+			// Membership of the room is checked inside Join, in the database,
+			// not from anything the client said about itself.
+			list, err := h.Voice.Join(ctx, in.RoomID, c.actor, c.owner)
+			if err != nil {
+				sendVoiceError(h, c, in.ID, err)
+				continue
+			}
+			policy, err := h.Voice.Policy(ctx, in.RoomID)
+			if err != nil {
+				sendError("INTERNAL", "Try again")
+				continue
+			}
+			h.mu.Lock()
+			c.voiceRoom = in.RoomID
+			h.mu.Unlock()
+			h.queue(c, outbound{Version: 1, Type: "voice.joined", ID: in.ID, RoomID: in.RoomID, Payload: map[string]any{"self": c.actor, "participants": list, "policy": policy}})
+			h.broadcastVoice(in.RoomID, outbound{Version: 1, Type: "voice.participants", RoomID: in.RoomID, Payload: map[string]any{"participants": list}}, c.actor)
+		case "voice.leave":
+			h.leaveVoice(c)
+			h.queue(c, outbound{Version: 1, Type: "ack", ID: in.ID, RoomID: in.RoomID})
+		case "voice.state":
+			if h.Voice == nil {
+				sendError("VOICE_DISABLED", "Voice chat is switched off on this server")
+				continue
+			}
+			var st voiceState
+			if json.Unmarshal(in.Payload, &st) != nil {
+				sendError("INVALID_REQUEST", "Invalid voice state")
+				continue
+			}
+			h.mu.Lock()
+			room := c.voiceRoom
+			h.mu.Unlock()
+			if room == "" {
+				sendError("VOICE_NOT_JOINED", "Join the voice channel first")
+				continue
+			}
+			list, ok := h.Voice.SetState(room, c.actor, st.Muted, st.Deafened, st.Speaking)
+			if !ok {
+				sendError("VOICE_NOT_JOINED", "Join the voice channel first")
+				continue
+			}
+			h.broadcastVoice(room, outbound{Version: 1, Type: "voice.participants", RoomID: room, Payload: map[string]any{"participants": list}}, "")
+		case "voice.signal":
+			if h.Voice == nil {
+				sendError("VOICE_DISABLED", "Voice chat is switched off on this server")
+				continue
+			}
+			var sig voiceSignal
+			if json.Unmarshal(in.Payload, &sig) != nil {
+				sendError("INVALID_REQUEST", "Invalid signal")
+				continue
+			}
+			switch sig.Kind {
+			case "offer", "answer", "candidate", "bye":
+			default:
+				sendError("INVALID_REQUEST", "Unknown signal kind")
+				continue
+			}
+			if !httpx.UUID(sig.To) || len(sig.Data) > 12<<10 {
+				sendError("INVALID_REQUEST", "Invalid signal recipient or payload")
+				continue
+			}
+			h.mu.Lock()
+			room := c.voiceRoom
+			h.mu.Unlock()
+			if room == "" || !h.Voice.InChannel(room, c.actor) {
+				sendError("VOICE_NOT_JOINED", "Join the voice channel first")
+				continue
+			}
+			// Both ends must be in this room's channel. A player cannot
+			// address a stranger, a spectator, or someone in another room.
+			if sig.To == c.actor || !h.Voice.InChannel(room, sig.To) {
+				sendError("VOICE_NO_PEER", "That player is not in this voice channel")
+				continue
+			}
+			// The running game may forbid speech right now; refusing to relay
+			// stops a connection being negotiated while it does.
+			policy, err := h.Voice.Policy(ctx, room)
+			if err != nil {
+				sendError("INTERNAL", "Try again")
+				continue
+			}
+			if !policy.Open {
+				sendError("VOICE_CLOSED", policy.Reason)
+				continue
+			}
+			if !h.sendVoice(room, sig.To, outbound{Version: 1, Type: "voice.signal", RoomID: room, Payload: map[string]any{"from": c.actor, "kind": sig.Kind, "data": sig.Data}}) {
+				sendError("VOICE_NO_PEER", "That player is not in this voice channel")
+			}
 		case "match.subscribe":
 			if !httpx.UUID(in.MatchID) {
 				sendError("INVALID_REQUEST", "Invalid match id")
@@ -383,7 +530,8 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // messageType bounds metric label values to the known protocol.
 func messageType(t string) string {
 	switch t {
-	case "ping", "room.subscribe", "chat.send", "match.subscribe", "match.resync", "game.command":
+	case "ping", "room.subscribe", "chat.send", "match.subscribe", "match.resync", "game.command",
+		"voice.join", "voice.leave", "voice.state", "voice.signal":
 		return t
 	}
 	return "unknown"
@@ -422,6 +570,11 @@ func (h *Hub) queue(c *client, msg outbound) {
 	}
 }
 func (h *Hub) broadcast(room, kind string) {
+	// A match change can open or close voice -- Trump closes it while the
+	// trump is chosen -- so the channel is told as soon as the state moves.
+	if kind == "match.updated" {
+		go h.pushVoicePolicy(context.Background(), room)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for c := range h.clients {
@@ -435,6 +588,75 @@ func (h *Hub) broadcast(room, kind string) {
 			h.queue(c, outbound{Version: 1, Type: kind, RoomID: room})
 		}
 	}
+}
+
+// leaveVoice drops this socket's voice membership and tells the rest of the
+// channel. It runs on an explicit leave and again when the socket closes, so
+// a dropped connection never leaves a player listed as present.
+func (h *Hub) leaveVoice(c *client) {
+	h.mu.Lock()
+	room := c.voiceRoom
+	c.voiceRoom = ""
+	h.mu.Unlock()
+	if room == "" || h.Voice == nil {
+		return
+	}
+	list := h.Voice.Leave(room, c.actor, c.owner)
+	if list == nil {
+		return
+	}
+	h.broadcastVoice(room, outbound{Version: 1, Type: "voice.participants", RoomID: room, Payload: map[string]any{"participants": list}}, "")
+}
+
+// broadcastVoice sends to every socket in a room's voice channel, skipping
+// one user when except is set.
+func (h *Hub) broadcastVoice(room string, msg outbound, except string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		if c.voiceRoom == room && c.actor != except {
+			h.queue(c, msg)
+		}
+	}
+}
+
+// sendVoice relays one frame to a single player's voice sockets and reports
+// whether anyone received it.
+func (h *Hub) sendVoice(room, userID string, msg outbound) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	sent := false
+	for c := range h.clients {
+		if c.voiceRoom == room && c.actor == userID {
+			h.queue(c, msg)
+			sent = true
+		}
+	}
+	return sent
+}
+
+// pushVoicePolicy tells a room's voice channel whether the running game
+// allows speech now. It runs after every match change, so the moment a
+// restricted phase starts every client hears about it and stops sending.
+func (h *Hub) pushVoicePolicy(ctx context.Context, room string) {
+	if h.Voice == nil || len(h.Voice.Participants(room)) == 0 {
+		return
+	}
+	policy, err := h.Voice.Policy(ctx, room)
+	if err != nil {
+		return
+	}
+	h.broadcastVoice(room, outbound{Version: 1, Type: "voice.policy", RoomID: room, Payload: policy}, "")
+}
+
+// sendVoiceError turns a voice refusal into the client's error frame.
+func sendVoiceError(h *Hub, c *client, id string, err error) {
+	var ve *voice.Error
+	if errors.As(err, &ve) {
+		h.queue(c, outbound{Version: 1, Type: "error", ID: id, Payload: map[string]string{"code": ve.Code, "message": ve.Message}})
+		return
+	}
+	h.queue(c, outbound{Version: 1, Type: "error", ID: id, Payload: map[string]string{"code": "INTERNAL", "message": "Try again"}})
 }
 
 // broadcastSubscribed hints every subscribed client to refetch, used when

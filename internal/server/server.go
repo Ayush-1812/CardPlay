@@ -15,6 +15,7 @@ import (
 	"cardplay/internal/realtime"
 	"cardplay/internal/rooms"
 	"cardplay/internal/social"
+	"cardplay/internal/voice"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -45,7 +46,12 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 	// Room chat obeys the running game: Trump closes it while the trump is
 	// being chosen.
 	ch.Gate = match
+	// Voice chat: the server issues ICE credentials and relays signalling,
+	// never audio. A nil Gate would leave every game open; the match runtime
+	// answers for the game that is running.
+	vc := &voice.Module{DB: pool, Config: voice.Config(c.Voice), Gate: match}
 	hub := realtime.New(pool, rm, ch, match, c.Origin)
+	hub.Voice = vc
 	hub.Hourly = append(hub.Hourly, auth.PurgeIdleGuests)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, obs.Instrument(), obs.Recover)
@@ -138,6 +144,10 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 			// One-shot credential for a WebSocket handshake that cannot carry
 			// the session cookie (a client hosted on another site).
 			r.With(newLimiter(120, time.Minute)).Post("/realtime/ticket", auth.SocketTicket)
+			// ICE servers for voice, with a TURN credential that expires. The
+			// shared secret stays here; this is the only way a player gets a
+			// credential, and only ever for themselves.
+			r.With(newLimiter(60, time.Minute)).Get("/voice/ice", vc.ICE)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.Verified, newLimiter(120, time.Minute))
