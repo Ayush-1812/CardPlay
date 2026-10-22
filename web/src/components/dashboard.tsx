@@ -126,7 +126,10 @@ export function Dashboard() {
   const [socketNonce, setSocketNonce] = useState(0);
   const [gameBusy, setGameBusy] = useState(false);
   const [dismissedMatch, setDismissedMatch] = useState<string | null>(null);
-  const [chatVisible, setChatVisible] = useState(true);
+  // Whether the chat panel is on screen. On a game table the panel only
+  // exists while its overlay is open, so "no panel" means unread, not read:
+  // without this the count on a table's Chat button could never appear.
+  const [chatObserved, setChatObserved] = useState(true);
   const [chatBoundary, setChatBoundary] = useState(0);
   const sendRef = useRef<
     ((frame: Record<string, unknown>) => Promise<Reply>) | null
@@ -333,10 +336,17 @@ export function Dashboard() {
     if (!chatNode || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) setChatBoundary(lastChatID.current);
-      setChatVisible(entry.isIntersecting);
+      setChatObserved(entry.isIntersecting);
     });
     observer.observe(chatNode);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      // The panel has gone -- a table's chat was closed. What was on screen
+      // counts as read; anything after it is unread until it is opened
+      // again.
+      setChatBoundary(lastChatID.current);
+      setChatObserved(false);
+    };
   }, [chatNode]);
 
   useEffect(() => {
@@ -741,6 +751,7 @@ export function Dashboard() {
   const showTable = !!roomMatch && liveMatch(roomMatch.status);
   const showResult =
     !!roomMatch && !showTable && dismissedMatch !== roomMatch.match_id;
+  const chatVisible = !!chatNode && chatObserved;
   const unread = chatVisible
     ? 0
     : chat.filter((m) => m.id > chatBoundary && m.user_id !== user?.id).length;
@@ -874,7 +885,7 @@ export function Dashboard() {
   if (
     user &&
     selected &&
-    showTable &&
+    (showTable || showResult) &&
     roomMatch &&
     roomMatch.game_id === "bluff"
   ) {
@@ -896,6 +907,7 @@ export function Dashboard() {
               setNotice("You left the match. It ended with no winner.");
             })
           }
+          onHome={() => setDismissedMatch(roomMatch.match_id)}
         />
       </div>
     );
@@ -1008,7 +1020,11 @@ export function Dashboard() {
         result={
           showResult &&
           roomMatch &&
-          roomMatch.game_id !== "trump" &&
+          // The result panel below is the Monopoly table in a finished
+          // state. Games with their own table -- Trump, Bluff -- show their
+          // result in the room instead; rendering this one for them would
+          // hand a Monopoly component another game's state.
+          roomMatch.game_id === "monopoly-deal" &&
           Object.keys(cards).length > 0 ? (
             <section
               className="panel match-panel"

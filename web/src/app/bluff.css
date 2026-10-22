@@ -383,6 +383,11 @@
     calc(10px + env(safe-area-inset-bottom));
   overflow: auto;
 }
+/* The panel fills what is left, rather than sitting in a sea of felt. */
+.bluff-chat > :not(.chat-close) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .bluff-table .chat-close {
   min-height: 40px;
   margin-bottom: 8px;

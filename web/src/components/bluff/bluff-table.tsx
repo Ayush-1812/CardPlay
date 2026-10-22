@@ -32,6 +32,7 @@ export function BluffTable({
   unread,
   onCommand,
   onLeave,
+  onHome,
 }: {
   state: BluffMatch;
   busy: boolean;
@@ -43,6 +44,9 @@ export function BluffTable({
   unread?: number;
   onCommand: Command;
   onLeave: () => void;
+  // onHome returns to the room once the game is over, where the table can
+  // ready up for another.
+  onHome?: () => void;
 }) {
   const pub: BluffPublic = state.view.public;
   const self: BluffSelf = state.view.self;
@@ -347,9 +351,15 @@ export function BluffTable({
               </button>
             </>
           )}
-          <button type="button" className="btn-ghost small" onClick={onLeave}>
-            Leave match
-          </button>
+          {winner && onHome ? (
+            <button type="button" className="btn-gold" onClick={onHome}>
+              Back to the room
+            </button>
+          ) : (
+            <button type="button" className="btn-ghost small" onClick={onLeave}>
+              Leave match
+            </button>
+          )}
           {chat && (
             <button
               type="button"

@@ -327,3 +327,122 @@ test.describe.serial("bluff with two decks", () => {
       expect(p.errors, `${p.name} page errors`).toEqual([]);
   });
 });
+
+// Playing to a winner, which is where the table changes shape: the result
+// has to be shown, and the room has to let everyone go again.
+test.describe.serial("bluff to the end", () => {
+  const players: Player[] = [];
+  const pub = (p: Player) => latestState(p).view.public;
+  const self = (p: Player) => latestState(p).view.self;
+
+  test.beforeAll(async ({ browser }) => {
+    for (const name of ["fin", "fio", "fox"])
+      players.push(await newPlayer(browser, name));
+  });
+  test.afterAll(async () => {
+    for (const p of players) await p?.context.close();
+  });
+
+  test("a game runs to a winner, and the table says so", async () => {
+    const host = players[0];
+    await playAsGuest(host);
+    await host.page.getByRole("button", { name: /^Bluff/ }).click();
+    await host.page.getByRole("button", { name: "Create room" }).click();
+    await expect(
+      host.page.getByRole("heading", { level: 1, name: /'s table$/ }),
+    ).toBeVisible();
+    const link = await host.page.getByLabel("Invite link").inputValue();
+    await host.page.getByText("Room settings").click();
+    await host.page
+      .locator('.room-settings select[name="capacity"]')
+      .selectOption("3");
+    await host.page
+      .locator(".room-settings")
+      .getByRole("button", { name: "Save" })
+      .click();
+    for (const p of players.slice(1)) {
+      await p.page.goto(link);
+      await p.page.getByLabel("Your name").fill(p.name);
+      await p.page.getByRole("button", { name: "Join as guest" }).click();
+      await expect(p.page.locator(".room-head .pill")).toHaveText("Connected");
+    }
+    for (const p of players)
+      await p.page.getByRole("button", { name: "I'm ready" }).click();
+    await host.page.getByRole("button", { name: "Start match" }).click();
+    for (const p of players)
+      await expect(p.page.locator(".bluff-table")).toBeVisible();
+
+    // Play the maximum every turn and accept everything: the fastest way
+    // to empty a hand.
+    for (let move = 0; pub(players[0]).winner < 0 && move < 200; move++) {
+      await expect
+        .poll(() => new Set(players.map((p) => latestState(p).revision)).size, {
+          timeout: 20_000,
+        })
+        .toBe(1);
+      const state = pub(players[0]);
+      if (state.phase === "play") {
+        const turn = players.find((p) => self(p).may_play)!;
+        const cards = turn.page.locator(".hand-card:not([disabled])");
+        await expect(cards.first()).toBeEnabled({ timeout: 10_000 });
+        const n = Math.min(state.max_cards, await cards.count());
+        for (let i = 0; i < n; i++) await cards.nth(i).click();
+        await turn.page.getByRole("button", { name: /^Play \d+ as / }).click();
+        await expect
+          .poll(() => pub(turn).phase, { timeout: 15_000 })
+          .not.toBe("play");
+      } else {
+        for (const p of players) {
+          const accept = p.page.getByRole("button", { name: "Accept" });
+          if (await accept.isVisible().catch(() => false)) await accept.click();
+        }
+        await expect
+          .poll(() => pub(players[0]).phase, { timeout: 20_000 })
+          .not.toBe("challenge");
+      }
+    }
+    expect(pub(players[0]).winner).toBeGreaterThanOrEqual(0);
+
+    // The result is shown where the game happened, not left behind: every
+    // player is told who won, and is offered the way back.
+    const winner = pub(players[0]).winner;
+    for (const p of players) {
+      await expect(p.page.locator(".winner")).toBeVisible({ timeout: 15_000 });
+      await expect(p.page.locator(".winner")).toContainText(
+        self(p).seat === winner ? "You win" : "wins",
+      );
+      await expect(
+        p.page.getByRole("button", { name: "Back to the room" }),
+      ).toBeVisible();
+      // Nobody is still being asked to play.
+      await expect(p.page.locator(".hand-status")).not.toContainText(
+        "Your turn",
+      );
+    }
+    for (const p of players)
+      expect(p.errors, `${p.name} page errors`).toEqual([]);
+  });
+
+  test("the room lets everyone play again", async () => {
+    for (const p of players) {
+      await p.page.getByRole("button", { name: "Back to the room" }).click();
+      await expect(p.page.locator(".room-head")).toBeVisible({
+        timeout: 15_000,
+      });
+      await p.page.getByRole("button", { name: "I'm ready" }).click();
+    }
+    await players[0].page.getByRole("button", { name: "Start match" }).click();
+    for (const p of players)
+      await expect(p.page.locator(".bluff-table")).toBeVisible({
+        timeout: 20_000,
+      });
+    // A fresh deal: a full deck, the call back at Aces, nothing in the pile.
+    const fresh = pub(players[0]);
+    expect(fresh.counts.reduce((a, b) => a + b, 0)).toBe(52);
+    expect(fresh.rank).toBe("a");
+    expect(fresh.pile_count).toBe(0);
+    expect(fresh.winner).toBe(-1);
+    for (const p of players)
+      expect(p.errors, `${p.name} page errors`).toEqual([]);
+  });
+});
