@@ -292,7 +292,7 @@ test.describe.serial("voice is scoped and optional", () => {
     // Either refusal is fine to show; what matters is that it names the
     // layer that said no and the game carries on.
     await expect(voice(p)).toContainText(
-      /blocked from using your microphone|blocking the microphone|could not be opened/,
+      /microphone is blocked|blocking the microphone|could not be opened/,
       {
         timeout: 20_000,
       },

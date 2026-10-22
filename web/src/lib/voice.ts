@@ -52,13 +52,15 @@ export async function micErrorMessage(err: unknown): Promise<string> {
   switch (name) {
     case "NotAllowedError":
     case "SecurityError":
-      // A refusal has two very different causes, and telling a player to
-      // look in the address bar is wrong for one of them. If the site is
-      // still allowed to ask, nothing was ever asked: the operating system
-      // or a policy refused on the browser's behalf.
-      return (await siteIsBlocked())
-        ? "This site is blocked from using your microphone. Open the icon at the left of the address bar, set Microphone to Allow, then join voice again."
-        : "Your system is blocking the microphone for browsers, so you were never asked. On Windows: Settings, Privacy & security, Microphone, turn on microphone access for apps. On macOS: System Settings, Privacy & Security, Microphone. Then join voice again.";
+      // A refusal has two causes and the browser does not separate them:
+      // Chrome reports the permission as denied both when the site is
+      // blocked and when the operating system blocks microphones for
+      // browsers, even while the site's own switch looks on. Guessing one
+      // sends players chasing the wrong setting, so both are named, in the
+      // order worth trying.
+      if ((await micPermission()) === "granted")
+        return "Your system is blocking the microphone for browsers, so you were never asked. On Windows: Settings, Privacy & security, Microphone, turn on microphone access and 'Let desktop apps access your microphone'. On macOS: System Settings, Privacy & Security, Microphone. Then join voice again.";
+      return "The microphone is blocked, so no prompt appeared. Two things to check: open the icon at the left of the address bar and press Reset permission; and if its switch is already on, the block is your system -- on Windows, Settings, Privacy & security, Microphone, turn on microphone access and 'Let desktop apps access your microphone'. Then join voice again.";
     case "NotFoundError":
     case "OverconstrainedError":
       return "No microphone was found. Plug one in or choose another device, then join voice again.";
@@ -71,18 +73,18 @@ export async function micErrorMessage(err: unknown): Promise<string> {
   }
 }
 
-// siteIsBlocked reports whether this origin itself is in the browser's
-// blocked list, as opposed to the request being refused above the browser.
-// Browsers without the Permissions API fall back to the site answer, which
-// is the more common cause.
-async function siteIsBlocked(): Promise<boolean> {
+// micPermission is what the browser says about this origin: "granted",
+// "denied", "prompt", or "unknown" where the Permissions API is missing.
+// A granted permission that still fails can only have been refused above
+// the browser.
+export async function micPermission(): Promise<PermissionState | "unknown"> {
   try {
     const status = await navigator.permissions.query({
       name: "microphone" as PermissionName,
     });
-    return status.state === "denied";
+    return status.state;
   } catch {
-    return true;
+    return "unknown";
   }
 }
 
