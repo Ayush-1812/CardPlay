@@ -6,6 +6,7 @@
 
 import { FormEvent, useState } from "react";
 import { Invitation, Room, User } from "../../lib/api";
+import { HowToPlayButton } from "../how-to-play";
 
 export type GameEntry = {
   id: string;
@@ -128,24 +129,31 @@ export function GamesScreen({
 
       <div className="game-grid">
         {GAMES.map((g) => (
-          <button
-            key={g.id}
-            type="button"
-            className={`game-tile ${g.playable ? "" : "soon"}`}
-            disabled={!g.playable}
-            aria-label={`${g.name}${g.playable ? "" : ", coming soon"}`}
-            onClick={() => onPick(g)}
-          >
-            <span className="game-suit" aria-hidden="true">
-              {g.suit}
-            </span>
-            <span className="game-name">{g.name}</span>
-            <span className="game-blurb">{g.blurb}</span>
-            <span className="game-meta">
-              {g.players}
-              {g.playable ? "" : " · Coming soon"}
-            </span>
-          </button>
+          <div className="game-cell" key={g.id}>
+            <button
+              type="button"
+              className={`game-tile ${g.playable ? "" : "soon"}`}
+              disabled={!g.playable}
+              aria-label={`${g.name}${g.playable ? "" : ", coming soon"}`}
+              onClick={() => onPick(g)}
+            >
+              <span className="game-suit" aria-hidden="true">
+                {g.suit}
+              </span>
+              <span className="game-name">{g.name}</span>
+              <span className="game-blurb">{g.blurb}</span>
+              <span className="game-meta">
+                {g.players}
+                {g.playable ? "" : " · Coming soon"}
+              </span>
+            </button>
+            {/* Never played it? Read first, then sit down. */}
+            <HowToPlayButton
+              gameID={g.id}
+              label={`How to play ${g.name}`}
+              className="text-button game-rules"
+            />
+          </div>
         ))}
       </div>
     </main>
@@ -181,6 +189,13 @@ export function GameLobby({
       <div className="screen-head">
         <p className="eyebrow">{game.players}</p>
         <h1>{game.name}</h1>
+        <p className="screen-blurb">{game.blurb}</p>
+        {/* Read the rules before taking a seat, not after. */}
+        <HowToPlayButton
+          gameID={game.id}
+          label={`How to play ${game.name}`}
+          className="btn-ghost small"
+        />
       </div>
       <section className="entry-card">
         <label className="field">

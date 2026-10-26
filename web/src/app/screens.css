@@ -1112,3 +1112,99 @@ footer.sheet-foot {
   line-height: 1.35;
   opacity: 0.75;
 }
+
+/* ---- How to play ------------------------------------------------- */
+.guide-meta {
+  margin: 0 0 10px;
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.guide-goal {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--accent, #efc049);
+  background: rgba(239, 192, 73, 0.12);
+}
+.guide-goal p {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.guide-section,
+.guide-quick,
+.guide-goal {
+  margin-bottom: 14px;
+}
+.guide-section h3,
+.guide-quick h3,
+.guide-goal h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.guide-quick ol,
+.guide-section ul {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 5px;
+}
+.guide-quick li,
+.guide-section li {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.guide-screen {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.guide-screen > div {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+}
+.guide-screen dt {
+  font-weight: 700;
+  font-size: 13px;
+}
+.guide-screen dd {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.9;
+}
+/* On a phone the label sits above what it describes. */
+@media (max-width: 520px) {
+  .guide-screen > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+  }
+}
+
+/* A game tile and its rules link sit together. */
+.game-cell {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+.game-cell .game-tile {
+  width: 100%;
+}
+.game-rules {
+  padding-left: 2px;
+}
+.screen-blurb {
+  margin: 4px 0 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.85;
+}
