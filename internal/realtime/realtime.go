@@ -150,8 +150,11 @@ func sendMatchError(h *Hub, c *client, id string, err error) {
 	h.queue(c, outbound{Version: 1, Type: "error", ID: id, Payload: map[string]string{"code": "INTERNAL", "message": "Try again"}})
 }
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// No credential in URL, and no wildcard origins. Recheck cookies through auth middleware.
-	if r.Header.Get("Origin") != h.Origin {
+	// No wildcard origins. A browser is held to the one origin this server
+	// serves; an app, which sends no Origin at all, is admitted on the
+	// strength of the one-shot ticket it had to be authenticated to get.
+	origin := r.Header.Get("Origin")
+	if origin != h.Origin && !(origin == "" && r.URL.Query().Get("ticket") != "") {
 		httpx.Error(w, r, 403, "ORIGIN_REJECTED", "WebSocket origin is not allowed")
 		return
 	}

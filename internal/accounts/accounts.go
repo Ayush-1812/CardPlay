@@ -28,6 +28,33 @@ import (
 
 const CookieName = "cardplay_session"
 
+// ClientHeader marks a request from an app rather than a browser. An app
+// gets its session as a token in the response body and sends it back as a
+// bearer token; a browser keeps the cookie it always had.
+//
+// It matters that this is a header a page cannot set on a cross-site
+// request without the server agreeing to it first, because that is what
+// keeps the cookie path safe: a browser cannot ask for a token.
+const ClientHeader = "X-CardPlay-Client"
+
+// NativeClient is the value ClientHeader carries.
+const NativeClient = "native"
+
+// Native reports whether a request came from an app.
+func Native(r *http.Request) bool {
+	return r.Header.Get(ClientHeader) == NativeClient
+}
+
+// BearerToken returns the session token an app sent, or "".
+func BearerToken(r *http.Request) string {
+	const prefix = "Bearer "
+	value := r.Header.Get("Authorization")
+	if len(value) <= len(prefix) || !strings.EqualFold(value[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(value[len(prefix):])
+}
+
 // DeviceCookieName marks a browser that has signed in to an account before.
 const DeviceCookieName = "cardplay_device"
 const DeviceTTL = 180 * 24 * time.Hour
@@ -76,8 +103,16 @@ func PasswordMatches(encoded, password string) bool {
 
 func (m *Module) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if c, err := r.Cookie(CookieName); err == nil && len(c.Value) == 64 {
-			hash := httpx.Hash(c.Value)
+		// A browser sends the cookie; an app sends a bearer token. They
+		// name the same session row, so everything downstream is identical.
+		token := BearerToken(r)
+		if token == "" {
+			if c, err := r.Cookie(CookieName); err == nil {
+				token = c.Value
+			}
+		}
+		if len(token) == 64 {
+			hash := httpx.Hash(token)
 			u, err := store.New(m.DB).SessionUser(r.Context(), hash)
 			if err == nil {
 				// Activity is recorded at most hourly; it keeps a guest alive.
@@ -305,8 +340,18 @@ func (m *Module) Guest(w http.ResponseWriter, r *http.Request) {
 	}
 	// The database session decides validity and slides with use; the cookie
 	// just has to outlive it.
+	user := map[string]any{"id": u.ID, "handle": u.Handle, "display_name": u.DisplayName, "email": "", "email_verified": false, "is_guest": true, "guest": true}
+	// An app has no cookie jar worth relying on: it is given the token and
+	// keeps it itself. A browser is given the cookie and never sees the
+	// token, which is what keeps it out of reach of a script on the page.
+	if Native(r) {
+		httpx.JSON(w, 201, map[string]any{"token": token, "user": user})
+		return
+	}
+	// The database session decides validity and slides with use; the cookie
+	// just has to outlive it.
 	http.SetCookie(w, &http.Cookie{Name: CookieName, Value: token, Path: "/", HttpOnly: true, Secure: m.Config.SecureCookie, SameSite: http.SameSiteLaxMode, MaxAge: int((30 * 24 * time.Hour).Seconds())})
-	httpx.JSON(w, 201, map[string]any{"id": u.ID, "handle": u.Handle, "display_name": u.DisplayName, "email": "", "email_verified": false, "is_guest": true})
+	httpx.JSON(w, 201, user)
 }
 
 // SocketTicketTTL is how long a socket ticket may be used. It covers one

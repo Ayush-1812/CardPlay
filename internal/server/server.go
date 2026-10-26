@@ -64,7 +64,19 @@ func New(pool *pgxpool.Pool, c config.Config) *App {
 			w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 			w.Header().Set("X-Frame-Options", "DENY")
 			w.Header().Set("Referrer-Policy", "no-referrer")
-			if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" && r.Header.Get("Origin") != c.Origin {
+			// Cross-site request forgery is a browser problem: a page can
+			// make a browser send a write with the user's cookie attached
+			// without ever seeing it, and comparing Origin is how that is
+			// caught. The check therefore guards the cookie, not the route.
+			//
+			// A request that brings its own credential has nothing to
+			// borrow. An app sends a bearer token, and when it is signing
+			// in and has none yet it says so with a header that no page can
+			// set on a cross-site request without a preflight this server
+			// never answers. Either way there must be no cookie: a forged
+			// request would carry one, and an app has none.
+			write := r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS"
+			if write && !selfCredentialed(r) && r.Header.Get("Origin") != c.Origin {
 				httpx.Error(w, r, 403, "ORIGIN_REJECTED", "Request origin is not allowed")
 				return
 			}
@@ -361,4 +373,14 @@ func clientError(w http.ResponseWriter, r *http.Request) {
 		"digest", clip(in.Digest, 64),
 	)
 	w.WriteHeader(204)
+}
+
+// selfCredentialed reports whether a request proves who it is without the
+// browser's help: a bearer token, or an app's sign-in before it has one.
+// A cookie means a browser is involved, and then Origin decides.
+func selfCredentialed(r *http.Request) bool {
+	if _, err := r.Cookie(accounts.CookieName); err == nil {
+		return false
+	}
+	return accounts.BearerToken(r) != "" || accounts.Native(r)
 }
