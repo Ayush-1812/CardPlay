@@ -1193,11 +1193,15 @@ footer.sheet-foot {
 /* A game tile and its rules link sit together. */
 .game-cell {
   display: grid;
+  /* The tile takes the height of the row so a line of games stays level,
+     with its rules link underneath. */
+  grid-template-rows: 1fr auto;
   gap: 4px;
   justify-items: start;
 }
 .game-cell .game-tile {
   width: 100%;
+  height: 100%;
 }
 .game-rules {
   padding-left: 2px;
