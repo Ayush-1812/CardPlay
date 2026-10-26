@@ -17,6 +17,7 @@ import {
   secondsLeft,
   sortHand,
 } from "../../lib/bluff";
+import { HowToPlayButton } from "../how-to-play";
 import { BluffCard, BluffCardBack, HandCard } from "./playing-card";
 
 type Command = (kind: string, payload: object) => Promise<boolean>;
@@ -152,6 +153,11 @@ export function BluffTable({
             <span className="rank-call-label">Call</span>
             <strong>{rankWord(pub.rank, true)}</strong>
           </span>
+          <HowToPlayButton
+            gameID="bluff"
+            label="Rules"
+            className="conn rules-link"
+          />
           {connection && (
             <span
               className={`conn ${offline ? "bad" : "good"}`}

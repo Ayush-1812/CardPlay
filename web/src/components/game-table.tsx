@@ -22,6 +22,7 @@ import {
   MatchState,
   PublicPlayer,
 } from "../lib/game";
+import { HowToPlayButton } from "./how-to-play";
 import { CardSheet } from "./table/action-sheet";
 import { Hand } from "./table/hand";
 import { destinationPayload, destinations, placements } from "./table/layout";
@@ -680,6 +681,11 @@ export function GameTable({
         </div>
         <div className="table-top-actions">
           {connection && <span className="table-conn">{connection}</span>}
+          <HowToPlayButton
+            gameID="monopoly-deal"
+            label="Rules"
+            className="btn-ghost small"
+          />
           <button
             className="btn-ghost small chat-toggle"
             aria-expanded={chatOpen}

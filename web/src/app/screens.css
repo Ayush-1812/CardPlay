@@ -1208,3 +1208,13 @@ footer.sheet-foot {
   line-height: 1.45;
   opacity: 0.85;
 }
+
+/* The rules link on a table reads as part of the top bar, not a control
+   competing with the game's own. */
+.rules-link {
+  border: 1px solid rgba(239, 192, 73, 0.3);
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
