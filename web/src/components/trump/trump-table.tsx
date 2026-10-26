@@ -19,6 +19,7 @@ import {
   cardLabel,
   whyIllegal,
 } from "../../lib/trump";
+import { HowToPlayButton } from "../how-to-play";
 import { TrumpCardBack, TrumpCardFace } from "./playing-card";
 import { RoundOver, TrumpChoice, WonTricks } from "./sheets";
 
@@ -257,6 +258,11 @@ export function TrumpTable({
               {pub.trump ? SUIT_NAME[pub.trump] : "No trump yet"}
             </span>
           </span>
+          <HowToPlayButton
+            gameID="trump"
+            label="Rules"
+            className="rules-link"
+          />
           {connection && (
             <span
               className={`conn ${offline ? "bad" : "good"}`}

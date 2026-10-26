@@ -37,7 +37,7 @@ test.describe.serial("bluff at a four-seat table", () => {
   test("a Bluff room deals the whole deck", async () => {
     const host = players[0];
     await playAsGuest(host);
-    await host.page.getByRole("button", { name: /^Bluff/ }).click();
+    await host.page.getByRole("button", { name: "Bluff", exact: true }).click();
     await expect(
       host.page.getByRole("heading", { level: 1, name: "Bluff" }),
     ).toBeVisible();
@@ -262,7 +262,7 @@ test.describe.serial("bluff with two decks", () => {
   test("two decks deal 104 cards and allow a claim of eight", async () => {
     const host = players[0];
     await playAsGuest(host);
-    await host.page.getByRole("button", { name: /^Bluff/ }).click();
+    await host.page.getByRole("button", { name: "Bluff", exact: true }).click();
     await host.page.getByRole("button", { name: "Create room" }).click();
     await expect(
       host.page.getByRole("heading", { level: 1, name: /'s table$/ }),
@@ -346,7 +346,7 @@ test.describe.serial("bluff to the end", () => {
   test("a game runs to a winner, and the table says so", async () => {
     const host = players[0];
     await playAsGuest(host);
-    await host.page.getByRole("button", { name: /^Bluff/ }).click();
+    await host.page.getByRole("button", { name: "Bluff", exact: true }).click();
     await host.page.getByRole("button", { name: "Create room" }).click();
     await expect(
       host.page.getByRole("heading", { level: 1, name: /'s table$/ }),

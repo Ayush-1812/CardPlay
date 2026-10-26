@@ -1,4 +1,9 @@
-import { expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import {
+  expect,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
 import { randomBytes } from "node:crypto";
 import { hiddenCardLeaks } from "./db";
 
@@ -19,14 +24,23 @@ export type Player = {
 };
 
 // Reads a token from the newest message sent to `email` in the test Mailpit.
-export async function mailToken(email: string, subject: RegExp): Promise<string> {
+export async function mailToken(
+  email: string,
+  subject: RegExp,
+): Promise<string> {
   const api = process.env.E2E_MAIL_API!;
   for (let i = 0; i < 50; i++) {
-    const res = await fetch(`${api}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`);
-    const list = (await res.json()) as { messages: { ID: string; Subject: string }[] };
+    const res = await fetch(
+      `${api}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`,
+    );
+    const list = (await res.json()) as {
+      messages: { ID: string; Subject: string }[];
+    };
     const msg = list.messages.find((m) => subject.test(m.Subject));
     if (msg) {
-      const full = (await (await fetch(`${api}/api/v1/message/${msg.ID}`)).json()) as { Text: string };
+      const full = (await (
+        await fetch(`${api}/api/v1/message/${msg.ID}`)
+      ).json()) as { Text: string };
       const token = full.Text.match(/token:\s*\r?\n(\S+)/)?.[1];
       if (token) return token;
     }
@@ -39,7 +53,11 @@ export function uniqueHandle(prefix: string) {
   return `${prefix}_${randomBytes(4).toString("hex")}`;
 }
 
-export async function newPlayer(browser: Browser, prefix: string, options: Parameters<Browser["newContext"]>[0] = {}): Promise<Player> {
+export async function newPlayer(
+  browser: Browser,
+  prefix: string,
+  options: Parameters<Browser["newContext"]>[0] = {},
+): Promise<Player> {
   const context = await browser.newContext(options);
   // Track sockets so a test can drop them the way a network outage would.
   await context.addInitScript(() => {
@@ -57,16 +75,21 @@ export async function newPlayer(browser: Browser, prefix: string, options: Param
   const errors: string[] = [];
   const t0 = Date.now();
   const log: string[] = [];
-  const note = (s: string) => log.push(`${((Date.now() - t0) / 1000).toFixed(2)}s ${s}`);
+  const note = (s: string) =>
+    log.push(`${((Date.now() - t0) / 1000).toFixed(2)}s ${s}`);
   const watch = (page: Page) => {
     page.on("websocket", (ws) => {
       note("ws open");
       ws.on("framereceived", (f) => {
         frames.push(String(f.payload));
         const m = JSON.parse(String(f.payload));
-        note(`<- ${m.type}${m.payload?.code ? " " + m.payload.code : ""}${m.payload?.revision != null ? " rev " + m.payload.revision : ""}`);
+        note(
+          `<- ${m.type}${m.payload?.code ? " " + m.payload.code : ""}${m.payload?.revision != null ? " rev " + m.payload.revision : ""}`,
+        );
       });
-      ws.on("framesent", (f) => note(`-> ${JSON.parse(String(f.payload)).type}`));
+      ws.on("framesent", (f) =>
+        note(`-> ${JSON.parse(String(f.payload)).type}`),
+      );
       ws.on("close", () => note("ws close"));
       ws.on("socketerror", (e) => note(`ws error ${e}`));
     });
@@ -75,7 +98,16 @@ export async function newPlayer(browser: Browser, prefix: string, options: Param
   context.on("page", watch);
   const page = await context.newPage();
   const handle = uniqueHandle(prefix);
-  return { handle, email: `${handle}@e2e.test`, name: prefix, context, page, frames, errors, log };
+  return {
+    handle,
+    email: `${handle}@e2e.test`,
+    name: prefix,
+    context,
+    page,
+    frames,
+    errors,
+    log,
+  };
 }
 
 // Registration through the real form, verification with the emailed token,
@@ -83,7 +115,9 @@ export async function newPlayer(browser: Browser, prefix: string, options: Param
 export async function registerViaUI(p: Player) {
   const { page } = p;
   await page.goto("/");
-  await page.getByRole("button", { name: "Create an account (adds friends)" }).click();
+  await page
+    .getByRole("button", { name: "Create an account (adds friends)" })
+    .click();
   // The guest name field also uses display_name; fill the account form.
   const form = page.locator(".auth-box");
   await form.locator('input[name="display_name"]').fill(p.name);
@@ -91,11 +125,15 @@ export async function registerViaUI(p: Player) {
   await form.locator('input[name="email"]').fill(p.email);
   await form.locator('input[name="password"]').fill(PASSWORD);
   await page.getByRole("button", { name: "Create account →" }).click();
-  await expect(page.getByText("Check your email for a verification token.")).toBeVisible();
+  await expect(
+    page.getByText("Check your email for a verification token."),
+  ).toBeVisible();
   const token = await mailToken(p.email, /Verify your CardPlay account/);
   await page.locator('input[name="token"]').fill(token);
   await page.getByRole("button", { name: "Verify email →" }).click();
-  await expect(page.getByText("Email verified. You can sign in now.")).toBeVisible();
+  await expect(
+    page.getByText("Email verified. You can sign in now."),
+  ).toBeVisible();
   await signInForm(p);
 }
 
@@ -105,7 +143,9 @@ async function signInForm(p: Player) {
   await form.locator('input[name="email"]').fill(p.email);
   await form.locator('input[name="password"]').fill(PASSWORD);
   await page.getByRole("button", { name: "Take your seat →" }).click();
-  await expect(page.getByRole("heading", { name: "Choose a game" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Choose a game" }),
+  ).toBeVisible();
 }
 
 export async function login(p: Player) {
@@ -119,20 +159,31 @@ export async function playAsGuest(p: Player) {
   await p.page.goto("/");
   await p.page.getByLabel("Your name").fill(p.name);
   await p.page.getByRole("button", { name: "Play as guest" }).click();
-  await expect(p.page.getByRole("heading", { name: "Choose a game" })).toBeVisible();
+  await expect(
+    p.page.getByRole("heading", { name: "Choose a game" }),
+  ).toBeVisible();
 }
 
 // Registration through the API the browser uses, for supporting players.
 export async function registerViaAPI(p: Player) {
   const res = await p.page.request.post("/api/v1/auth/register", {
-    data: { email: p.email, password: PASSWORD, handle: p.handle, display_name: p.name },
-    headers: { Origin: new URL(p.page.url() || "http://127.0.0.1:3100").origin },
+    data: {
+      email: p.email,
+      password: PASSWORD,
+      handle: p.handle,
+      display_name: p.name,
+    },
+    headers: {
+      Origin: new URL(p.page.url() || "http://127.0.0.1:3100").origin,
+    },
   });
   expect(res.status()).toBeLessThan(300);
   const token = await mailToken(p.email, /Verify your CardPlay account/);
   const verify = await p.page.request.post("/api/v1/auth/verify", {
     data: { token },
-    headers: { Origin: new URL(p.page.url() || "http://127.0.0.1:3100").origin },
+    headers: {
+      Origin: new URL(p.page.url() || "http://127.0.0.1:3100").origin,
+    },
   });
   expect(verify.status()).toBe(200);
   await login(p);
@@ -149,7 +200,9 @@ export async function makeFriends(a: Player, b: Player) {
   await a.page.keyboard.press("Escape");
   await b.page.reload();
   await b.page.getByRole("button", { name: "Friends", exact: true }).click();
-  const row = b.page.getByRole("dialog", { name: "Friends" }).locator(".friend-row", { hasText: `@${a.handle}` });
+  const row = b.page
+    .getByRole("dialog", { name: "Friends" })
+    .locator(".friend-row", { hasText: `@${a.handle}` });
   await expect(row.getByText("Wants to be friends")).toBeVisible();
   await row.getByRole("button", { name: "Accept" }).click();
   await expect(row.getByText("Friend", { exact: true })).toBeVisible();
@@ -160,13 +213,22 @@ export async function makeFriends(a: Player, b: Player) {
 // it in Room settings.
 export async function createRoom(host: Player, name: string, seats: number) {
   const { page } = host;
-  await page.getByRole("button", { name: "Monopoly Deal" }).click();
+  await page
+    .getByRole("button", { name: "Monopoly Deal", exact: true })
+    .click();
   await page.getByRole("button", { name: "Create room" }).click();
-  await expect(page.getByRole("heading", { level: 1, name: /'s table$/ })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: /'s table$/ }),
+  ).toBeVisible();
   await page.getByText("Room settings").click();
   await page.locator('.room-settings input[name="name"]').fill(name);
-  await page.locator('.room-settings select[name="capacity"]').selectOption(String(seats));
-  await page.locator(".room-settings").getByRole("button", { name: "Save" }).click();
+  await page
+    .locator('.room-settings select[name="capacity"]')
+    .selectOption(String(seats));
+  await page
+    .locator(".room-settings")
+    .getByRole("button", { name: "Save" })
+    .click();
   await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
   await expect(page.locator(".room-head .pill")).toHaveText("Connected");
 }
@@ -174,8 +236,13 @@ export async function createRoom(host: Player, name: string, seats: number) {
 // Joins a room from a friend's invitation on the games screen.
 export async function joinInvitation(p: Player, roomName: string) {
   await p.page.reload();
-  await p.page.locator(".rejoin-row", { hasText: roomName }).getByRole("button", { name: "Join →" }).click();
-  await expect(p.page.getByRole("heading", { level: 1, name: roomName })).toBeVisible();
+  await p.page
+    .locator(".rejoin-row", { hasText: roomName })
+    .getByRole("button", { name: "Join →" })
+    .click();
+  await expect(
+    p.page.getByRole("heading", { level: 1, name: roomName }),
+  ).toBeVisible();
 }
 
 // Taps a hand card the way a keyboard user would (cards overlap in the
@@ -208,9 +275,14 @@ export async function expectNoLeaks(players: Player[]) {
   const matchID = latestState(players[0]).match_id;
   const leaks = await hiddenCardLeaks(
     matchID,
-    players.map((p) => ({ name: p.name, userID: userIDOf(p), frames: p.frames })),
+    players.map((p) => ({
+      name: p.name,
+      userID: userIDOf(p),
+      frames: p.frames,
+    })),
   );
   expect(leaks).toEqual([]);
 }
 
-export const statusText = (p: Player) => p.page.locator(".game-status strong").innerText();
+export const statusText = (p: Player) =>
+  p.page.locator(".game-status strong").innerText();

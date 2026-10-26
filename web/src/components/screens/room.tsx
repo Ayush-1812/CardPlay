@@ -7,6 +7,7 @@
 import { ReactNode, useState } from "react";
 import { Friend, RoomView, User } from "../../lib/api";
 import { GAMES } from "./home";
+import { HowToPlayButton } from "../how-to-play";
 
 const DEFAULT_TEAM = ["Team A", "Team B"];
 
@@ -121,6 +122,8 @@ export function RoomScreen({
             private room
           </p>
           <h1>{room.name}</h1>
+          {/* Waiting for the table to fill is the moment to read the rules. */}
+          <HowToPlayButton gameID={room.game_id} className="text-button" />
         </div>
         <span className={`pill ${connection === "Connected" ? "ok" : ""}`}>
           {connection}

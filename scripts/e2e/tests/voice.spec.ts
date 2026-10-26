@@ -116,7 +116,7 @@ test.describe.serial("voice chat at a four-seat table", () => {
   test("four players join one room's voice channel", async () => {
     const host = players[0];
     await playAsGuest(host);
-    await host.page.getByRole("button", { name: /Trump/ }).click();
+    await host.page.getByRole("button", { name: "Trump", exact: true }).click();
     await host.page.getByRole("button", { name: "Create room" }).click();
     await expect(
       host.page.getByRole("heading", { level: 1, name: /'s table$/ }),
@@ -333,7 +333,7 @@ test.describe.serial("voice is scoped and optional", () => {
         );
     });
     await playAsGuest(p);
-    await p.page.getByRole("button", { name: /Trump/ }).click();
+    await p.page.getByRole("button", { name: "Trump", exact: true }).click();
     await p.page.getByRole("button", { name: "Create room" }).click();
     await expect(
       p.page.getByRole("heading", { level: 1, name: /'s table$/ }),
@@ -360,7 +360,7 @@ test.describe.serial("voice is scoped and optional", () => {
     await fakeMic(b);
     for (const p of [a, b]) {
       await playAsGuest(p);
-      await p.page.getByRole("button", { name: /Trump/ }).click();
+      await p.page.getByRole("button", { name: "Trump", exact: true }).click();
       await p.page.getByRole("button", { name: "Create room" }).click();
       await expect(
         p.page.getByRole("heading", { level: 1, name: /'s table$/ }),
@@ -409,7 +409,7 @@ test.describe.serial("voice holds up with five players", () => {
     await playAsGuest(host);
     // A six-seat game, so five can sit down. Voice follows the room, so
     // there is no need to start a match to talk.
-    await host.page.getByRole("button", { name: /^Bluff/ }).click();
+    await host.page.getByRole("button", { name: "Bluff", exact: true }).click();
     await host.page.getByRole("button", { name: "Create room" }).click();
     await expect(
       host.page.getByRole("heading", { level: 1, name: /'s table$/ }),
