@@ -96,7 +96,7 @@ test.describe.serial("how to play", () => {
   });
 
   test("the guide is there in the lobby and in the room", async () => {
-    await p.page.getByRole("button", { name: /^Bluff/ }).click();
+    await p.page.getByRole("button", { name: "Bluff", exact: true }).click();
     await p.page
       .getByRole("button", { name: "How to play Bluff" })
       .first()

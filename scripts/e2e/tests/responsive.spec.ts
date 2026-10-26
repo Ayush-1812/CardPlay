@@ -124,7 +124,7 @@ test.describe.serial("every screen fits every device", () => {
     const host = players[0];
     await playAsGuest(host);
     await check(host, "the games screen", false);
-    await host.page.getByRole("button", { name: /Trump/ }).click();
+    await host.page.getByRole("button", { name: "Trump", exact: true }).click();
     await check(host, "the Trump entry", false);
     await host.page.setViewportSize({ width: 390, height: 844 });
     await host.page.getByRole("button", { name: "Create room" }).click();
@@ -208,7 +208,9 @@ test.describe.serial("the Monopoly table fits every device", () => {
   test("a live table on a phone, sideways and on a tablet", async () => {
     const [host, guest] = players;
     await playAsGuest(host);
-    await host.page.getByRole("button", { name: "Monopoly Deal" }).click();
+    await host.page
+      .getByRole("button", { name: "Monopoly Deal", exact: true })
+      .click();
     await host.page.getByRole("button", { name: "Create room" }).click();
     await expect(
       host.page.getByRole("heading", { level: 1, name: /'s table$/ }),

@@ -156,7 +156,7 @@ export function BluffTable({
           <HowToPlayButton
             gameID="bluff"
             label="Rules"
-            className="conn rules-link"
+            className="rules-link"
           />
           {connection && (
             <span

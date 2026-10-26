@@ -261,7 +261,7 @@ export function TrumpTable({
           <HowToPlayButton
             gameID="trump"
             label="Rules"
-            className="conn rules-link"
+            className="rules-link"
           />
           {connection && (
             <span

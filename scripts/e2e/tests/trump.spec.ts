@@ -37,7 +37,7 @@ test.describe.serial("trump at a four-seat table", () => {
   test("a Trump room seats exactly four", async () => {
     const host = players[0];
     await playAsGuest(host);
-    await host.page.getByRole("button", { name: /Trump/ }).click();
+    await host.page.getByRole("button", { name: "Trump", exact: true }).click();
     await expect(
       host.page.getByRole("heading", { level: 1, name: "Trump" }),
     ).toBeVisible();
@@ -504,7 +504,7 @@ test.describe.serial("tricks a team has won", () => {
   test("four players start a round and play one trick", async () => {
     const host = seats[0];
     await playAsGuest(host);
-    await host.page.getByRole("button", { name: /Trump/ }).click();
+    await host.page.getByRole("button", { name: "Trump", exact: true }).click();
     await host.page.getByRole("button", { name: "Create room" }).click();
     await host.page
       .locator(".room-head .pill")

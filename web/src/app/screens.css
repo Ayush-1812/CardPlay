@@ -1216,9 +1216,17 @@ footer.sheet-foot {
 /* The rules link on a table reads as part of the top bar, not a control
    competing with the game's own. */
 .rules-link {
+  padding: 4px 10px;
+  border-radius: 999px;
   border: 1px solid rgba(239, 192, 73, 0.3);
+  background: rgba(0, 0, 0, 0.3);
   color: inherit;
   font: inherit;
   font-size: 11px;
+  line-height: 1.4;
   cursor: pointer;
+}
+.rules-link:focus-visible {
+  outline: 3px solid var(--accent, #efc049);
+  outline-offset: 2px;
 }

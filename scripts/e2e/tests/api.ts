@@ -25,7 +25,11 @@ export function apiEnv(base: string): NodeJS.ProcessEnv {
 }
 
 export async function startAPI(base: string) {
-  const child = spawn(process.env.E2E_API_BIN!, ["serve"], { env: apiEnv(base), stdio: "ignore", detached: true });
+  const child = spawn(process.env.E2E_API_BIN!, ["serve"], {
+    env: apiEnv(base),
+    stdio: "ignore",
+    detached: true,
+  });
   child.unref();
   writeFileSync(pidFile, String(child.pid));
   for (let i = 0; i < 100; i++) {
