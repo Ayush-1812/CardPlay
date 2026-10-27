@@ -678,7 +678,7 @@ func (q *Queries) SwapSeats(ctx context.Context, arg SwapSeatsParams) error {
 }
 
 const updateRoom = `-- name: UpdateRoom :exec
-UPDATE rooms SET name=$2,capacity=$3,team_a=$4,team_b=$5,deck_count=$6 WHERE id=$1
+UPDATE rooms SET name=$2,capacity=$3,team_a=$4,team_b=$5,deck_count=$6,game_id=$7 WHERE id=$1
 `
 
 type UpdateRoomParams struct {
@@ -688,6 +688,7 @@ type UpdateRoomParams struct {
 	TeamA     string `json:"team_a"`
 	TeamB     string `json:"team_b"`
 	DeckCount int16  `json:"deck_count"`
+	GameID    string `json:"game_id"`
 }
 
 func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) error {
@@ -698,6 +699,7 @@ func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) error {
 		arg.TeamA,
 		arg.TeamB,
 		arg.DeckCount,
+		arg.GameID,
 	)
 	return err
 }

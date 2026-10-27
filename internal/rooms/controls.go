@@ -39,6 +39,11 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 		// with a fixed deck ignore it; Bluff deals them all. Absent means
 		// leave it as it is, so renaming a room cannot quietly reset it.
 		Decks *int32 `json:"decks"`
+		// Game switches the room to another game. The point of a room is
+		// the people in it, so a group that has finished one game can play
+		// another without rebuilding the lobby, re-inviting anybody or
+		// dropping out of voice. Absent leaves the game alone.
+		Game string `json:"game"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -74,7 +79,14 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	d, known := m.describe(room.GameID)
+	// A switch is validated against the game being switched to, not the
+	// one being left, or a four-player Trump room could keep its capacity
+	// into a game that cannot seat four.
+	gameID := room.GameID
+	if in.Game != "" {
+		gameID = in.Game
+	}
+	d, known := m.describe(gameID)
 	if !known {
 		httpx.Error(w, r, 400, "UNKNOWN_GAME", "That game is not available")
 		return
@@ -102,7 +114,12 @@ func (m *Module) Update(w http.ResponseWriter, r *http.Request) {
 	if in.Decks != nil {
 		decks = int16(*in.Decks)
 	}
-	if err = q.UpdateRoom(r.Context(), store.UpdateRoomParams{ID: id, Name: in.Name, Capacity: in.Capacity, TeamA: in.TeamA, TeamB: in.TeamB, DeckCount: decks}); err == nil {
+	if err = q.UpdateRoom(r.Context(), store.UpdateRoomParams{ID: id, Name: in.Name, Capacity: in.Capacity, TeamA: in.TeamA, TeamB: in.TeamB, DeckCount: decks, GameID: gameID}); err == nil && gameID != room.GameID {
+		// Nobody is ready for a game they have not agreed to yet, so a
+		// switch puts everyone back to not ready.
+		err = q.ResetReady(r.Context(), id)
+	}
+	if err == nil {
 		err = changed(r.Context(), q, id)
 	}
 	if err == nil {
