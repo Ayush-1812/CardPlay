@@ -199,26 +199,46 @@ A backup is only real once a restore has been proven: restore into an empty data
 
 ## A host that sleeps
 
-A free Render service stops after about 15 minutes without traffic. The next
-visitor then waits up to a minute while it starts, and until it answers the
-gateway in front of it returns 502 with `X-Render-Routing: no-deploy`. This is
-the usual reason a site that worked last week looks broken today.
+A free Render service stops after 15 minutes without inbound traffic and
+takes about a minute to wake. See [Render's free instance limits](https://render.com/docs/free).
+The Vercel homepage can still return 200 throughout a backend outage: an
+HTTP monitor fetching that page does not run its JavaScript or call the API.
 
 Two defences, both already in the repository:
 
-1. **The client waits it out.** A read that fails with a dropped connection or
-   502, 503 or 504 is retried with backoff for about 40 seconds, and the
-   screen says the server is starting instead of showing an error. Writes are
-   never retried, because one may have been applied even when the answer was
-   lost.
-2. **A scheduled ping keeps it running.** [`.github/workflows/keepalive.yml`](../.github/workflows/keepalive.yml)
-   calls the health endpoint every ten minutes once the repository variable
-   `API_HEALTH_URL` is set, for example `https://cardplay.onrender.com/healthz`.
+1. **The client waits for up to 90 seconds.** Reads retry gateway 502/503/504
+   responses and dropped connections with backoff. Fetching headers and the
+   body share that deadline, so a stalled response cannot leave the page
+   loading indefinitely. Each new action gets a fresh budget. Writes retry
+   only non-JSON 502/503 responses; a timeout or dropped write response is
+   never replayed. Hosting 429 responses and security challenges stop retries
+   and show their own error instead of claiming the server is starting.
+2. **Monitor the backend directly.** In UptimeRobot, edit the HTTP(s) monitor:
+   use `https://cardplay.onrender.com/readyz`, a five-minute interval, and
+   require HTTP 200. Keep the homepage monitor separately if desired, but
+   it does not keep Render awake. Readiness also checks the database,
+   migrations, and notification listener. A monitor timeout during a cold
+   start is possible; confirm recovery on its next check.
+3. **Use the repository fallback.** [`.github/workflows/keepalive.yml`](../.github/workflows/keepalive.yml)
+   calls that readiness endpoint every five minutes by default in
+   `Ayush-1812/CardPlay`. `API_HEALTH_URL` overrides it; forks must set their
+   own HTTPS backend `/readyz` or `/healthz` URL. Merge the workflow onto the
+   default branch and enable Actions, then run **Keep the API awake** once
+   manually and confirm HTTP 200. Scheduled runs can be delayed or disabled
+   after repository inactivity, so they are not an availability guarantee.
 
-**Keep exactly one free service in the account.** An always-awake service uses
-about 730 of the 750 free instance-hours a month; a second one exhausts the
-allowance and both are suspended until the month turns over, which looks
-exactly like the sleeping problem but does not fix itself when pinged.
+**Watch the workspace's free allowance.** One always-awake service uses up to
+744 of the shared 750 free instance-hours per month. Other services can exhaust
+the remainder. Pings cannot bypass a suspension, resource limit, or hosting
+restriction. A plain-text 429 with `X-Render-Routing: hibernate-rate-limited`
+comes from Render, not CardPlay's JSON rate limiter. Check Render Events and
+usage if it persists; that header alone does not identify which limit caused
+the refusal. Free hosting still permits restarts and cannot guarantee zero
+cold starts.
+
+After deploying, verify both `https://cardplay.onrender.com/readyz` and
+`https://card-play01.vercel.app/api/v1/games` return HTTP 200 and JSON. A green
+homepage check alone does not verify that the application works.
 
 ## When something is wrong
 

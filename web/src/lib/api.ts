@@ -77,21 +77,15 @@ export class APIError extends Error {
   }
 }
 // A host that sleeps when idle, which free tiers do, needs a cold start of
-// up to a minute. Until it answers, the gateway in front of it returns 502,
-// 503 or 504, or drops the connection. None of those mean the request was
-// handled, so a read can simply be asked again.
-// The API always answers with JSON, even for errors. A body that is not JSON
-// therefore came from something in front of it: the host's router while the
-// service starts, a gateway timing out, or an edge error page. Those replies
-// mean the request never reached the application.
+// up to a minute. Until it answers, the gateway in front of it can return
+// 502, 503 or 504, or drop the connection. Reads can be retried; writes need
+// more care because a gateway timeout may follow a committed request.
+// The API answers with JSON, even for errors. A non-JSON body can also be a
+// hosting rate limit or security challenge, which retrying will not resolve.
 const WAKE_BACKOFF_MS = [1000, 2000, 4000, 8000, 12000, 16000];
-// How long the client keeps waiting for a service that is starting. The
-// window is shared by every request, so a screen that loads three things
-// waits about this long in total rather than this long three times over.
-const WAKE_WINDOW_MS = 45000;
-
-// When the current wait ends; 0 when nothing is known to be starting.
-let wakeUntil = 0;
+// Render's cold start takes about a minute. Include time spent fetching the
+// response body in a bounded 90-second budget, with a fresh budget per action.
+const WAKE_WINDOW_MS = 90000;
 
 let onWaking: ((waking: boolean) => void) | null = null;
 
@@ -101,17 +95,6 @@ export function setWakingListener(fn: ((waking: boolean) => void) | null) {
 }
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
-
-// mayWait opens the shared window on the first refusal and keeps it open
-// until it expires.
-function mayWait(): boolean {
-  const now = Date.now();
-  if (wakeUntil === 0) {
-    wakeUntil = now + WAKE_WINDOW_MS;
-    return true;
-  }
-  return now < wakeUntil;
-}
 
 type Answer = { gateway: boolean; data?: { error?: APIErrorBody } };
 type APIErrorBody = { code?: string; message?: string };
@@ -128,13 +111,12 @@ async function read(response: Response): Promise<Answer> {
   }
 }
 
-// A read can always be repeated. A write is repeated only when the reply
-// proves it never ran: a gateway refusing the request because the service is
-// down or starting. A timeout is not such a proof -- the application may have
-// received and applied it -- so those are reported instead of resent.
+// Only ordinary gateway failures get startup retries. A write is never
+// repeated after a timeout: the application may have already applied it.
 function worthRetrying(method: string, status: number): boolean {
-  if (method === "GET") return true;
-  return status !== 504 && status !== 408;
+  return (
+    status === 502 || status === 503 || (method === "GET" && status === 504)
+  );
 }
 
 export async function api<T>(
@@ -142,6 +124,15 @@ export async function api<T>(
   method = "GET",
   body?: unknown,
 ): Promise<T> {
+  const deadline = Date.now() + WAKE_WINDOW_MS;
+  const mayWait = () => Date.now() < deadline;
+  const backoff = (attempt: number) =>
+    sleep(
+      Math.min(
+        WAKE_BACKOFF_MS[Math.min(attempt, WAKE_BACKOFF_MS.length - 1)],
+        Math.max(0, deadline - Date.now()),
+      ),
+    );
   let waking = false;
   const announce = (active: boolean) => {
     if (waking === active) return;
@@ -150,10 +141,24 @@ export async function api<T>(
   };
 
   for (let attempt = 0; ; attempt++) {
-    const last = attempt >= WAKE_BACKOFF_MS.length;
+    if (!mayWait()) {
+      announce(false);
+      throw new APIError(
+        "UNAVAILABLE",
+        "CardPlay did not respond within 90 seconds. Please try again.",
+        0,
+      );
+    }
     let response: Response;
+    let answer: Answer;
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      Math.max(0, deadline - Date.now()),
+    );
     try {
       response = await fetch(`/api/v1${path}`, {
+        signal: controller.signal,
         method,
         credentials: "same-origin",
         cache: "no-store",
@@ -163,12 +168,22 @@ export async function api<T>(
             : { "Content-Type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
+      answer =
+        response.status === 204 ? { gateway: false } : await read(response);
     } catch {
       // The request never left, or the connection broke. Repeating a write
       // here could apply it twice, so only reads are tried again.
-      if (!last && method === "GET" && mayWait()) {
+      if (controller.signal.aborted) {
+        announce(false);
+        throw new APIError(
+          "UNAVAILABLE",
+          "CardPlay did not respond within 90 seconds. Please try again.",
+          0,
+        );
+      }
+      if (method === "GET" && mayWait()) {
         announce(true);
-        await sleep(WAKE_BACKOFF_MS[attempt]);
+        await backoff(attempt);
         continue;
       }
       announce(false);
@@ -177,30 +192,52 @@ export async function api<T>(
         "Cannot reach CardPlay. Check your connection and try again.",
         0,
       );
+    } finally {
+      clearTimeout(timeout);
     }
 
     if (response.status === 204) {
-      wakeUntil = 0;
       announce(false);
       return undefined as T;
     }
 
-    const answer = await read(response);
     if (answer.gateway) {
-      if (!last && worthRetrying(method, response.status) && mayWait()) {
+      // Render can refuse a sleeping service with a plain-text 429, and
+      // Cloudflare can return an HTML challenge. Neither means it is starting.
+      if (response.status === 429) {
+        announce(false);
+        throw new APIError(
+          "RATE_LIMITED",
+          "CardPlay is temporarily rate-limited by its hosting provider. Please wait a few minutes before trying again.",
+          response.status,
+        );
+      }
+      if (
+        response.status === 403 ||
+        response.headers.get("cf-mitigated") === "challenge"
+      ) {
+        announce(false);
+        throw new APIError(
+          "ACCESS_BLOCKED",
+          "CardPlay's hosting provider is blocking this connection. Please try again later.",
+          response.status,
+        );
+      }
+      if (worthRetrying(method, response.status) && mayWait()) {
         announce(true);
-        await sleep(WAKE_BACKOFF_MS[attempt]);
+        await backoff(attempt);
         continue;
       }
       announce(false);
       throw new APIError(
         "UNAVAILABLE",
-        "CardPlay is starting up and did not answer in time. Wait a few seconds and try again.",
+        worthRetrying(method, response.status)
+          ? "CardPlay did not respond within 90 seconds. Please try again."
+          : "CardPlay did not return a valid response. Please try again later.",
         response.status,
       );
     }
 
-    wakeUntil = 0;
     announce(false);
     if (!response.ok) {
       throw new APIError(

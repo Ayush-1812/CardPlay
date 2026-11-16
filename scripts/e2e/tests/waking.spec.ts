@@ -78,16 +78,15 @@ test("a write that never reached the server is retried, not reported as broken",
   await p.context.close();
 });
 
-// An error page with a status outside the usual gateway set still is not JSON,
-// so it is handled the same way rather than shown as "unexpected response".
-test("any non-JSON reply is treated as the server being unavailable", async ({
+// A challenge cannot be solved by replaying requests through the proxy.
+test("a hosting challenge is reported without startup retries", async ({
   browser,
 }) => {
   const p = await newPlayer(browser, "oddity");
   let served = 0;
 
   await p.page.route("**/api/v1/**", async (route) => {
-    if (route.request().method() === "GET" && served < 2) {
+    if (route.request().method() === "GET") {
       served++;
       // 403 is what an edge bot-check returns, with an HTML body.
       await route.fulfill(gatewayPage(403));
@@ -98,30 +97,176 @@ test("any non-JSON reply is treated as the server being unavailable", async ({
 
   await p.page.goto("/");
   await expect(
-    p.page.getByRole("button", { name: "Play as guest" }),
-  ).toBeVisible({ timeout: 30000 });
-  await expect(p.page.getByText(/unexpected response/)).toHaveCount(0);
-  expect(served).toBe(2);
+    p.page.getByText(/hosting provider is blocking this connection/),
+  ).toBeVisible();
+  await expect(p.page.getByText(/Starting the server/)).toHaveCount(0);
+  expect(served).toBe(1);
   expect(p.errors).toEqual([]);
   await p.context.close();
 });
 
-// When it really will not come back, the message says what is happening and
-// what to do, instead of blaming the response.
+for (const method of ["GET", "POST"]) {
+  test(`a hosting rate limit on ${method} is reported without startup retries`, async ({
+    browser,
+  }) => {
+    const p = await newPlayer(browser, "limited");
+    let attempts = 0;
+    await p.page.route("**/api/v1/**", async (route) => {
+      if (method === "POST" && route.request().method() === "GET") {
+        await route.fulfill({
+          status: 401,
+          json: { error: { code: "UNAUTHENTICATED" } },
+        });
+        return;
+      }
+      attempts++;
+      await route.fulfill({
+        status: 429,
+        contentType: "text/plain",
+        headers: { "X-Render-Routing": "hibernate-rate-limited" },
+        body: "Too Many Requests",
+      });
+    });
+    await p.page.goto("/");
+    if (method === "POST") {
+      await p.page.getByLabel("Your name").fill(p.name);
+      await p.page.getByRole("button", { name: "Play as guest" }).click();
+    }
+    await expect(
+      p.page.getByText(/temporarily rate-limited by its hosting provider/),
+    ).toBeVisible();
+    await expect(p.page.getByText(/Starting the server/)).toHaveCount(0);
+    expect(attempts).toBe(1);
+    expect(p.errors).toEqual([]);
+    await p.context.close();
+  });
+}
+
+test("a gateway timeout never repeats a guest creation", async ({
+  browser,
+}) => {
+  const p = await newPlayer(browser, "timeout");
+  let attempts = 0;
+  await p.page.route("**/api/v1/**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 401,
+        json: { error: { code: "UNAUTHENTICATED" } },
+      });
+      return;
+    }
+    attempts++;
+    await route.fulfill(gatewayPage(504));
+  });
+  await p.page.goto("/");
+  await p.page.getByLabel("Your name").fill(p.name);
+  await p.page.getByRole("button", { name: "Play as guest" }).click();
+  await expect(
+    p.page.getByText(/did not return a valid response/),
+  ).toBeVisible();
+  expect(attempts).toBe(1);
+  expect(p.errors).toEqual([]);
+  await p.context.close();
+});
+
+test("a cold start lasting over a minute can recover", async ({ browser }) => {
+  const p = await newPlayer(browser, "slow-start");
+  await p.page.clock.install();
+  let ready = false;
+  await p.page.route("**/api/v1/**", (route) =>
+    route.fulfill(
+      ready
+        ? { status: 401, json: { error: { code: "UNAUTHENTICATED" } } }
+        : gatewayPage(502),
+    ),
+  );
+  await p.page.goto("/");
+  await expect(p.page.getByText(/Starting the server/)).toBeVisible();
+  await p.page.clock.runFor(61000);
+  await expect(p.page.getByText(/Starting the server/)).toBeVisible();
+  ready = true;
+  await p.page.clock.runFor(16000);
+  await expect(
+    p.page.getByRole("button", { name: "Play as guest" }),
+  ).toBeVisible();
+  await expect(p.page.getByText(/did not respond/)).toHaveCount(0);
+  expect(p.errors).toEqual([]);
+  await p.context.close();
+});
+
+for (const stalledPart of ["headers", "body"]) {
+  test(`a stalled response ${stalledPart} cannot leave the screen loading forever`, async ({
+    browser,
+  }) => {
+    const p = await newPlayer(browser, "stalled");
+    await p.page.clock.install();
+    await p.page.addInitScript((part) => {
+      window.fetch = async (_input, init) => {
+        const aborted = () => new DOMException("Aborted", "AbortError");
+        if (part === "headers") {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(aborted()));
+          });
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              init?.signal?.addEventListener("abort", () =>
+                controller.error(aborted()),
+              );
+            },
+          }),
+        );
+      };
+    }, stalledPart);
+    await p.page.goto("/");
+    await expect(p.page.getByText("Finding your seat…")).toBeVisible();
+    await p.page.clock.runFor(91000);
+    await expect(
+      p.page.getByText(/did not respond within 90 seconds/),
+    ).toBeVisible();
+    await expect(
+      p.page.getByRole("button", { name: "Play as guest" }),
+    ).toBeVisible();
+    expect(p.errors).toEqual([]);
+    await p.context.close();
+  });
+}
+
+// An outage ends within the budget, and does not poison later manual attempts.
 test("a server that never answers gives an honest message", async ({
   browser,
 }) => {
   const p = await newPlayer(browser, "downer");
+  await p.page.clock.install();
   await p.page.route("**/api/v1/**", (route) =>
     route.fulfill(gatewayPage(502)),
   );
 
   await p.page.goto("/");
+  await expect(p.page.getByText(/Starting the server/)).toBeVisible();
+  await p.page.clock.runFor(91000);
   await expect(
-    p.page.getByText(/CardPlay is starting up and did not answer/),
-  ).toBeVisible({
-    timeout: 90000,
+    p.page.getByText(/did not respond within 90 seconds/),
+  ).toBeVisible();
+  let attempts = 0;
+  await p.page.route("**/api/v1/auth/guest", (route) => {
+    attempts++;
+    return route.fulfill(
+      attempts === 1
+        ? gatewayPage(503)
+        : {
+            status: 503,
+            json: { error: { code: "TEST", message: "Reached the API again" } },
+          },
+    );
   });
-  await expect(p.page.getByText(/unexpected response/)).toHaveCount(0);
+  await p.page.getByLabel("Your name").fill(p.name);
+  await p.page.getByRole("button", { name: "Play as guest" }).click();
+  await expect(p.page.getByText(/Starting the server/)).toBeVisible();
+  await p.page.clock.runFor(2000);
+  await expect(p.page.getByText("Reached the API again")).toBeVisible();
+  expect(attempts).toBe(2);
+  expect(p.errors).toEqual([]);
   await p.context.close();
 });
