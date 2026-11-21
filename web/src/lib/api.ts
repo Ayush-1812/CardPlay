@@ -81,11 +81,23 @@ export class APIError extends Error {
 // 502, 503 or 504, or drop the connection. Reads can be retried; writes need
 // more care because a gateway timeout may follow a committed request.
 // The API answers with JSON, even for errors. A non-JSON body can also be a
-// hosting rate limit or security challenge, which retrying will not resolve.
+// hosting rate limit or security challenge. Only Render's explicit temporary
+// hibernation refusal gets a small, separate recovery budget on reads.
 const WAKE_BACKOFF_MS = [1000, 2000, 4000, 8000, 12000, 16000];
 // Render's cold start takes about a minute. Include time spent fetching the
 // response body in a bounded 90-second budget, with a fresh budget per action.
 const WAKE_WINDOW_MS = 90000;
+const HIBERNATE_RETRIES = 2;
+
+function hibernateRetryDelay(response: Response): number {
+  const value = response.headers.get("retry-after")?.trim();
+  if (value && /^\d+$/.test(value)) return Math.max(1000, Number(value) * 1000);
+  if (value) {
+    const until = Date.parse(value);
+    if (Number.isFinite(until)) return Math.max(1000, until - Date.now());
+  }
+  return 30000;
+}
 
 let onWaking: ((waking: boolean) => void) | null = null;
 
@@ -125,6 +137,7 @@ export async function api<T>(
   body?: unknown,
 ): Promise<T> {
   const deadline = Date.now() + WAKE_WINDOW_MS;
+  let hibernateRetries = 0;
   const mayWait = () => Date.now() < deadline;
   const backoff = (attempt: number) =>
     sleep(
@@ -202,16 +215,8 @@ export async function api<T>(
     }
 
     if (answer.gateway) {
-      // Render can refuse a sleeping service with a plain-text 429, and
-      // Cloudflare can return an HTML challenge. Neither means it is starting.
-      if (response.status === 429) {
-        announce(false);
-        throw new APIError(
-          "RATE_LIMITED",
-          "CardPlay is temporarily rate-limited by its hosting provider. Please wait a few minutes before trying again.",
-          response.status,
-        );
-      }
+      // A challenge may itself use HTTP 429. Check it first: it cannot be
+      // resolved by replaying requests through the proxy.
       if (
         response.status === 403 ||
         response.headers.get("cf-mitigated") === "challenge"
@@ -220,6 +225,27 @@ export async function api<T>(
         throw new APIError(
           "ACCESS_BLOCKED",
           "CardPlay's hosting provider is blocking this connection. Please try again later.",
+          response.status,
+        );
+      }
+      if (response.status === 429) {
+        const delay = hibernateRetryDelay(response);
+        if (
+          method === "GET" &&
+          response.headers.get("x-render-routing") ===
+            "hibernate-rate-limited" &&
+          hibernateRetries < HIBERNATE_RETRIES &&
+          Date.now() + delay < deadline
+        ) {
+          hibernateRetries++;
+          announce(true);
+          await sleep(delay);
+          continue;
+        }
+        announce(false);
+        throw new APIError(
+          "RATE_LIMITED",
+          "CardPlay is temporarily rate-limited by its hosting provider. Please wait a few minutes before trying again.",
           response.status,
         );
       }

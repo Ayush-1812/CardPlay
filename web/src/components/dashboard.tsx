@@ -743,8 +743,7 @@ export function Dashboard() {
 
   const wakingBanner = waking ? (
     <p className="waking-note" role="status">
-      Starting the server — this takes up to a minute when nobody has played for
-      a while.
+      Waiting for CardPlay — reconnecting can take up to 90 seconds.
     </p>
   ) : null;
   const roomMatch = match && match.room_id === selected ? match : null;
@@ -875,7 +874,7 @@ export function Dashboard() {
       <div className="app felt">
         <p className="splash" role="status">
           {waking
-            ? "Starting the server — this takes up to a minute when nobody has played for a while."
+            ? "Waiting for CardPlay — reconnecting can take up to 90 seconds."
             : "Finding your seat…"}
         </p>
       </div>

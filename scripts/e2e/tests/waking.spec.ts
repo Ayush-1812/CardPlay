@@ -30,14 +30,14 @@ test("a sleeping server is waited out on a read", async ({ browser }) => {
   });
 
   await p.page.goto("/");
-  await expect(p.page.getByText(/Starting the server/)).toBeVisible();
+  await expect(p.page.getByText(/Waiting for CardPlay/)).toBeVisible();
   await expect(
     p.page.getByText(/unexpected response|Cannot reach CardPlay/),
   ).toHaveCount(0);
   await expect(
     p.page.getByRole("button", { name: "Play as guest" }),
   ).toBeVisible({ timeout: 30000 });
-  await expect(p.page.getByText(/Starting the server/)).toHaveCount(0);
+  await expect(p.page.getByText(/Waiting for CardPlay/)).toHaveCount(0);
   expect(attempts, "the read should have been retried").toBeGreaterThanOrEqual(
     3,
   );
@@ -99,7 +99,7 @@ test("a hosting challenge is reported without startup retries", async ({
   await expect(
     p.page.getByText(/hosting provider is blocking this connection/),
   ).toBeVisible();
-  await expect(p.page.getByText(/Starting the server/)).toHaveCount(0);
+  await expect(p.page.getByText(/Waiting for CardPlay/)).toHaveCount(0);
   expect(served).toBe(1);
   expect(p.errors).toEqual([]);
   await p.context.close();
@@ -123,7 +123,12 @@ for (const method of ["GET", "POST"]) {
       await route.fulfill({
         status: 429,
         contentType: "text/plain",
-        headers: { "X-Render-Routing": "hibernate-rate-limited" },
+        // A generic GET limit must not be retried. Even the explicit Render
+        // hibernation refusal must not cause a POST to be replayed.
+        headers:
+          method === "POST"
+            ? { "X-Render-Routing": "hibernate-rate-limited" }
+            : {},
         body: "Too Many Requests",
       });
     });
@@ -135,7 +140,126 @@ for (const method of ["GET", "POST"]) {
     await expect(
       p.page.getByText(/temporarily rate-limited by its hosting provider/),
     ).toBeVisible();
-    await expect(p.page.getByText(/Starting the server/)).toHaveCount(0);
+    await expect(p.page.getByText(/Waiting for CardPlay/)).toHaveCount(0);
+    expect(attempts).toBe(1);
+    expect(p.errors).toEqual([]);
+    await p.context.close();
+  });
+}
+
+for (const retryAfter of ["45", "date"]) {
+  test(`Render hibernation recovers a read and respects Retry-After ${retryAfter}`, async ({
+    browser,
+  }) => {
+    const p = await newPlayer(browser, "hibernate");
+    const now = new Date("2026-11-21T12:00:00Z");
+    await p.page.clock.install({ time: now });
+    let attempts = 0;
+    await p.page.route("**/api/v1/**", (route) => {
+      attempts++;
+      return route.fulfill(
+        attempts === 1
+          ? {
+              status: 429,
+              contentType: "text/plain",
+              headers: {
+                "X-Render-Routing": "hibernate-rate-limited",
+                "Retry-After":
+                  retryAfter === "date"
+                    ? new Date(now.getTime() + 45000).toUTCString()
+                    : retryAfter,
+              },
+              body: "Too Many Requests",
+            }
+          : { status: 401, json: { error: { code: "UNAUTHENTICATED" } } },
+      );
+    });
+    await p.page.goto("/");
+    await expect(p.page.getByText(/Waiting for CardPlay/)).toBeVisible();
+    await p.page.clock.runFor(40000);
+    expect(attempts).toBe(1);
+    await p.page.clock.runFor(6000);
+    await expect(
+      p.page.getByRole("button", { name: "Play as guest" }),
+    ).toBeVisible();
+    await expect(p.page.getByText(/temporarily rate-limited/)).toHaveCount(0);
+    expect(attempts).toBe(2);
+    expect(p.errors).toEqual([]);
+    await p.context.close();
+  });
+}
+
+test("persistent Render hibernation stops after two delayed retries", async ({
+  browser,
+}) => {
+  const p = await newPlayer(browser, "hibernate-stop");
+  await p.page.clock.install();
+  let attempts = 0;
+  await p.page.route("**/api/v1/**", (route) => {
+    attempts++;
+    return route.fulfill({
+      status: 429,
+      contentType: "text/plain",
+      headers: { "X-Render-Routing": "hibernate-rate-limited" },
+      body: "Too Many Requests",
+    });
+  });
+  await p.page.goto("/");
+  await expect(p.page.getByText(/Waiting for CardPlay/)).toBeVisible();
+  await p.page.clock.runFor(29000);
+  expect(attempts).toBe(1);
+  // Let the routed response finish before advancing another full interval;
+  // otherwise the mock network can consume the remaining deadline in one jump.
+  const secondReply = p.page.waitForResponse("**/api/v1/me");
+  await p.page.clock.runFor(2000);
+  await (await secondReply).finished();
+  expect(attempts).toBe(2);
+  await p.page.clock.runFor(31000);
+  await expect(p.page.getByText(/temporarily rate-limited/)).toBeVisible();
+  await p.page.clock.runFor(60000);
+  expect(attempts).toBe(3);
+  expect(p.errors).toEqual([]);
+  await p.context.close();
+});
+
+for (const kind of ["challenge", "long-retry-after", "json-rate-limit"]) {
+  test(`Render recovery never retries ${kind}`, async ({ browser }) => {
+    const p = await newPlayer(browser, "no-retry");
+    await p.page.clock.install();
+    let attempts = 0;
+    await p.page.route("**/api/v1/**", (route) => {
+      attempts++;
+      return route.fulfill({
+        status: 429,
+        contentType:
+          kind === "json-rate-limit" ? "application/json" : "text/html",
+        headers: {
+          "X-Render-Routing": "hibernate-rate-limited",
+          ...(kind === "challenge" ? { "cf-mitigated": "challenge" } : {}),
+          ...(kind === "long-retry-after" ? { "Retry-After": "120" } : {}),
+        },
+        body:
+          kind === "json-rate-limit"
+            ? JSON.stringify({
+                error: {
+                  code: "RATE_LIMITED",
+                  message: "Application rate limit",
+                },
+              })
+            : "Too Many Requests",
+      });
+    });
+    await p.page.goto("/");
+    await expect(
+      p.page.getByText(
+        kind === "challenge"
+          ? /hosting provider is blocking/
+          : kind === "json-rate-limit"
+            ? /Application rate limit/
+            : /temporarily rate-limited/,
+      ),
+    ).toBeVisible();
+    await p.page.clock.runFor(91000);
     expect(attempts).toBe(1);
     expect(p.errors).toEqual([]);
     await p.context.close();
@@ -181,9 +305,9 @@ test("a cold start lasting over a minute can recover", async ({ browser }) => {
     ),
   );
   await p.page.goto("/");
-  await expect(p.page.getByText(/Starting the server/)).toBeVisible();
+  await expect(p.page.getByText(/Waiting for CardPlay/)).toBeVisible();
   await p.page.clock.runFor(61000);
-  await expect(p.page.getByText(/Starting the server/)).toBeVisible();
+  await expect(p.page.getByText(/Waiting for CardPlay/)).toBeVisible();
   ready = true;
   await p.page.clock.runFor(16000);
   await expect(
@@ -244,7 +368,7 @@ test("a server that never answers gives an honest message", async ({
   );
 
   await p.page.goto("/");
-  await expect(p.page.getByText(/Starting the server/)).toBeVisible();
+  await expect(p.page.getByText(/Waiting for CardPlay/)).toBeVisible();
   await p.page.clock.runFor(91000);
   await expect(
     p.page.getByText(/did not respond within 90 seconds/),
@@ -263,7 +387,7 @@ test("a server that never answers gives an honest message", async ({
   });
   await p.page.getByLabel("Your name").fill(p.name);
   await p.page.getByRole("button", { name: "Play as guest" }).click();
-  await expect(p.page.getByText(/Starting the server/)).toBeVisible();
+  await expect(p.page.getByText(/Waiting for CardPlay/)).toBeVisible();
   await p.page.clock.runFor(2000);
   await expect(p.page.getByText("Reached the API again")).toBeVisible();
   expect(attempts).toBe(2);

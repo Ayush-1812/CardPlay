@@ -211,8 +211,12 @@ Two defences, both already in the repository:
    body share that deadline, so a stalled response cannot leave the page
    loading indefinitely. Each new action gets a fresh budget. Writes retry
    only non-JSON 502/503 responses; a timeout or dropped write response is
-   never replayed. Hosting 429 responses and security challenges stop retries
-   and show their own error instead of claiming the server is starting.
+   never replayed. Reads receiving a non-JSON 429 with Render's explicit
+   `X-Render-Routing: hibernate-rate-limited` header get at most two additional
+   attempts, 30 seconds apart by default, within the same 90-second budget.
+   `Retry-After` takes precedence; a delay beyond the budget stops recovery.
+   Other rate limits, security challenges, and writes receiving 429 are never
+   retried. Persistent hosting refusals still require checking Render Events.
 2. **Monitor the backend directly.** In UptimeRobot, edit the HTTP(s) monitor:
    use `https://cardplay.onrender.com/readyz`, a five-minute interval, and
    require HTTP 200. Keep the homepage monitor separately if desired, but
